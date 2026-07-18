@@ -72,6 +72,8 @@ type Client struct {
 	Analytics *AnalyticsService
 	// Locations covers /locations: Instagram place tagging search + validate.
 	Locations *LocationsService
+	// Audio covers /audio: Instagram Reels licensed audio search.
+	Audio *AudioService
 	// Webhooks covers /webhooks: endpoint management + secret rotation.
 	Webhooks *WebhooksService
 }
@@ -154,6 +156,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Accounts = &AccountsService{client: c}
 	c.Analytics = &AnalyticsService{client: c}
 	c.Locations = &LocationsService{client: c}
+	c.Audio = &AudioService{client: c}
 	c.Webhooks = &WebhooksService{client: c}
 	return c, nil
 }

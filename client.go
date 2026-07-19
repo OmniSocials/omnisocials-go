@@ -76,6 +76,9 @@ type Client struct {
 	Audio *AudioService
 	// Webhooks covers /webhooks: endpoint management + secret rotation.
 	Webhooks *WebhooksService
+	// Inbox covers /inbox: social inbox conversations, messages, mark-read,
+	// and reply.
+	Inbox *InboxService
 }
 
 // Option configures a Client. Pass options to NewClient.
@@ -158,6 +161,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Locations = &LocationsService{client: c}
 	c.Audio = &AudioService{client: c}
 	c.Webhooks = &WebhooksService{client: c}
+	c.Inbox = &InboxService{client: c}
 	return c, nil
 }
 

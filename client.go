@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -65,6 +65,9 @@ type Client struct {
 	Media *MediaService
 	// Folders covers /folders: list, create, update, delete.
 	Folders *FoldersService
+	// HashtagSets covers /hashtag-sets: saved hashtag groups applied to
+	// posts at create time.
+	HashtagSets *HashtagSetsService
 	// Accounts covers /accounts: the workspace's connected social accounts.
 	Accounts *AccountsService
 	// Analytics covers /analytics: post stats (single + batch), overview,
@@ -156,6 +159,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Posts = &PostsService{client: c}
 	c.Media = &MediaService{client: c}
 	c.Folders = &FoldersService{client: c}
+	c.HashtagSets = &HashtagSetsService{client: c}
 	c.Accounts = &AccountsService{client: c}
 	c.Analytics = &AnalyticsService{client: c}
 	c.Locations = &LocationsService{client: c}

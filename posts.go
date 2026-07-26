@@ -23,10 +23,12 @@ type PostCreateParams struct {
 	// ScheduledAt is an ISO 8601 datetime. Omit to create a draft.
 	ScheduledAt string `json:"scheduled_at,omitempty"`
 	// MediaIDs are Media Library ids: either a []string shared across
-	// platforms, or a map[string][]string keyed by platform.
+	// platforms, or a map[string][]string keyed by platform. Entries may
+	// also be MediaIDEntry values ({id, alt}) for per-media alt text.
 	MediaIDs any `json:"media_ids,omitempty"`
 	// MediaURLs are public media URLs: either a []string shared across
-	// platforms, or a map[string][]string keyed by platform.
+	// platforms, or a map[string][]string keyed by platform. Entries may
+	// also be MediaURLEntry values ({url, alt}) for per-media alt text.
 	MediaURLs any `json:"media_urls,omitempty"`
 	// Type is the post type, e.g. "post", "story", "reel".
 	Type   string `json:"type,omitempty"`
@@ -42,6 +44,17 @@ type PostCreateParams struct {
 	// Collaborators are Instagram co-author usernames.
 	Collaborators []string  `json:"collaborators,omitempty"`
 	UserTags      []UserTag `json:"user_tags,omitempty"`
+	// HashtagSet applies a saved hashtag set by name (case-insensitive) once
+	// at create time; tags already in a caption are skipped; Instagram's
+	// 30-hashtag cap returns error code hashtag_limit_exceeded.
+	HashtagSet string `json:"hashtag_set,omitempty"`
+	// HashtagSetID applies a saved hashtag set by id (see HashtagSet).
+	HashtagSetID string `json:"hashtag_set_id,omitempty"`
+	// HashtagPlacement is where the hashtags go: "caption_append" (default)
+	// or "first_comment".
+	HashtagPlacement string `json:"hashtag_placement,omitempty"`
+	// HashtagPlatforms restricts the hashtags to a subset of Channels.
+	HashtagPlatforms []string `json:"hashtag_platforms,omitempty"`
 	// Per-platform options.
 	Pinterest      map[string]any       `json:"pinterest,omitempty"`
 	YouTube        map[string]any       `json:"youtube,omitempty"`
@@ -60,9 +73,11 @@ type PostCreateParams struct {
 // sent; drafts and scheduled posts can be updated.
 type PostUpdateParams struct {
 	// Content: plain string or map[string]string per-platform captions.
-	Content       any            `json:"content,omitempty"`
-	ScheduledAt   string         `json:"scheduled_at,omitempty"`
-	Channels      []string       `json:"channels,omitempty"`
+	Content     any      `json:"content,omitempty"`
+	ScheduledAt string   `json:"scheduled_at,omitempty"`
+	Channels    []string `json:"channels,omitempty"`
+	// MediaIDs / MediaURLs: same shapes as PostCreateParams, including
+	// MediaIDEntry / MediaURLEntry values for per-media alt text.
 	MediaIDs      any            `json:"media_ids,omitempty"`
 	MediaURLs     any            `json:"media_urls,omitempty"`
 	Type          string         `json:"type,omitempty"`
@@ -117,7 +132,8 @@ type Post struct {
 	// Accounts are the platform identifiers the post targets.
 	Accounts []string `json:"accounts,omitempty"`
 	// Media is either a []string of URLs shared across platforms or a
-	// per-platform map.
+	// per-platform map. Items include an optional "alt" accessibility
+	// description when one was set.
 	Media any `json:"media,omitempty"`
 	// ScheduleAt is the scheduled publish time (nil for drafts).
 	ScheduleAt     *string `json:"schedule_at,omitempty"`

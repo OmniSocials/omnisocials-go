@@ -344,6 +344,44 @@ func TestJSONBodyAndNullSerialization(t *testing.T) {
 	}
 }
 
+func TestMediaEntryAltTextSerialization(t *testing.T) {
+	var gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		fmt.Fprint(w, `{"data":{"id":"1","status":"draft","content":"c"}}`)
+	}))
+
+	// Plain strings and MediaURLEntry values mix in one []any list.
+	_, err := client.Posts.Create(context.Background(), &PostCreateParams{
+		Content:  "Sunrise over the harbor",
+		Channels: []string{"mastodon"},
+		MediaURLs: []any{
+			"https://example.com/plain.jpg",
+			MediaURLEntry{URL: "https://example.com/harbor.jpg", Alt: "A sailboat at sunrise"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Posts.Create: %v", err)
+	}
+	if !strings.Contains(gotBody, `"https://example.com/plain.jpg"`) ||
+		!strings.Contains(gotBody, `{"url":"https://example.com/harbor.jpg","alt":"A sailboat at sunrise"}`) {
+		t.Fatalf("expected mixed plain + alt media_urls entries in body, got %s", gotBody)
+	}
+
+	// MediaIDEntry omits an empty Alt.
+	_, err = client.Posts.Create(context.Background(), &PostCreateParams{
+		Content:  "c",
+		MediaIDs: []MediaIDEntry{{ID: "42"}},
+	})
+	if err != nil {
+		t.Fatalf("Posts.Create: %v", err)
+	}
+	if !strings.Contains(gotBody, `"media_ids":[{"id":"42"}]`) {
+		t.Fatalf("expected media_ids entry without alt in body, got %s", gotBody)
+	}
+}
+
 func TestBatchAnalyticsQueryJoinsIDs(t *testing.T) {
 	var gotIDs string
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +402,7 @@ func TestBatchAnalyticsQueryJoinsIDs(t *testing.T) {
 }
 
 // TestAllServiceMethodsExist is a compile-time inventory of the full method
-// surface: 36 endpoint methods + GET /health + the webhook verify helper.
+// surface: 41 endpoint methods + GET /health + the webhook verify helper.
 func TestAllServiceMethodsExist(t *testing.T) {
 	client, err := NewClient(WithAPIKey("omsk_test_key"))
 	if err != nil {
@@ -386,6 +424,9 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		// Folders (4)
 		client.Folders.List, client.Folders.Create, client.Folders.Update,
 		client.Folders.Delete,
+		// Hashtag sets (5)
+		client.HashtagSets.List, client.HashtagSets.Get, client.HashtagSets.Create,
+		client.HashtagSets.Update, client.HashtagSets.Delete,
 		// Accounts (2)
 		client.Accounts.List, client.Accounts.Get,
 		// Analytics (5)

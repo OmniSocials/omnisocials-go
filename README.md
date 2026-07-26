@@ -115,6 +115,24 @@ _, err = client.Posts.CreateAndPublish(ctx, &omnisocials.PostCreateParams{
 })
 ```
 
+### Per-media alt text
+
+Every `MediaURLs` / `MediaIDs` entry accepts either a plain string or a `MediaURLEntry` / `MediaIDEntry` with an `Alt` accessibility description (max 1500 chars). Alt text is delivered to Mastodon (media description), Bluesky (embed alt), X (photos and GIFs), and Pinterest (pin alt text). Strings and entry structs can be mixed in a `[]any`, and the same shapes work in per-platform maps and `ThreadPart` media.
+
+```go
+_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:     "Sunrise over the harbor",
+	Channels:    []string{"mastodon", "bluesky"},
+	ScheduledAt: "2026-08-01T09:00:00Z",
+	MediaURLs: []omnisocials.MediaURLEntry{
+		{
+			URL: "https://example.com/harbor.jpg",
+			Alt: "A small sailboat crossing a calm harbor at sunrise, sky in deep orange",
+		},
+	},
+})
+```
+
 ### Post with platform-specific options
 
 ```go
@@ -291,6 +309,38 @@ folders, err := client.Folders.List(ctx) // flat; build the tree via ParentID
 folder, err := client.Folders.Create(ctx, &omnisocials.FolderCreateParams{Name: "Campaigns"})
 _, err = client.Folders.Update(ctx, folder.Data.ID, &omnisocials.FolderUpdateParams{Name: "Campaigns 2026"})
 err = client.Folders.Delete(ctx, folder.Data.ID) // files move to root, subfolders move up
+```
+
+## Hashtag Sets
+
+Save reusable hashtag groups and apply them to posts at create time. Uses the `posts:read` / `posts:write` scopes.
+
+```go
+set, err := client.HashtagSets.Create(ctx, &omnisocials.HashtagSetCreateParams{
+	Name:     "Launch",
+	Hashtags: []string{"saas", "buildinpublic", "startup"}, // or one string: "#saas #buildinpublic #startup"
+})
+fmt.Println(set.Data.Preview) // "#saas #buildinpublic #startup"
+
+sets, err := client.HashtagSets.List(ctx)
+_, err = client.HashtagSets.Get(ctx, set.Data.ID)
+_, err = client.HashtagSets.Update(ctx, set.Data.ID, &omnisocials.HashtagSetUpdateParams{
+	Hashtags: []string{"saas", "founder"}, // replaces the full list
+})
+err = client.HashtagSets.Delete(ctx, set.Data.ID)
+```
+
+Apply a set when creating a post with `HashtagSet` (the set name, case-insensitive) or `HashtagSetID`. The set is applied once at create time and tags already in the caption are skipped. `HashtagPlacement` is `"caption_append"` (default) or `"first_comment"`, and `HashtagPlatforms` restricts the hashtags to a subset of the post's channels. Instagram's 30-hashtag cap returns error code `hashtag_limit_exceeded`.
+
+```go
+_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:          "Launch day!",
+	Channels:         []string{"instagram", "x"},
+	ScheduledAt:      "2026-08-01T09:00:00Z",
+	HashtagSet:       "Launch",
+	HashtagPlacement: "first_comment",
+	HashtagPlatforms: []string{"instagram"},
+})
 ```
 
 ## Accounts

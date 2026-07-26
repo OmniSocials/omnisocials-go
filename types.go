@@ -51,6 +51,29 @@ func Int(v int) *int { return &v }
 // Float64 returns a pointer to v, for optional float params.
 func Float64(v float64) *float64 { return &v }
 
+// ---- Media entries (alt text) -------------------------------------------------
+
+// MediaURLEntry is one media_urls entry carrying per-media alt text
+// (accessibility description, max 1500 chars). Alt text is delivered to
+// Mastodon (media description), Bluesky (embed alt), X (photo/GIF media
+// metadata), and Pinterest (pin alt_text fallback). Plain string entries and
+// MediaURLEntry values can be mixed in the same []any slice.
+type MediaURLEntry struct {
+	// URL is the public media URL.
+	URL string `json:"url"`
+	// Alt is the accessibility description (max 1500 chars).
+	Alt string `json:"alt,omitempty"`
+}
+
+// MediaIDEntry is one media_ids entry carrying per-media alt text. See
+// MediaURLEntry for which platforms receive alt text.
+type MediaIDEntry struct {
+	// ID is the Media Library id.
+	ID string `json:"id"`
+	// Alt is the accessibility description (max 1500 chars).
+	Alt string `json:"alt,omitempty"`
+}
+
 // ---- Thread parts (X / Bluesky / Mastodon) ----------------------------------
 
 // ThreadPart is one segment of a thread on X (max 280 chars), Bluesky
@@ -59,10 +82,12 @@ func Float64(v float64) *float64 { return &v }
 type ThreadPart struct {
 	// Text is the part's text.
 	Text string `json:"text"`
-	// MediaIDs are Library ids from a media upload.
-	MediaIDs []string `json:"media_ids,omitempty"`
-	// MediaURLs are public external URLs.
-	MediaURLs []string `json:"media_urls,omitempty"`
+	// MediaIDs are Library ids from a media upload: a []string, or a
+	// []MediaIDEntry (or mixed []any) for per-media alt text.
+	MediaIDs any `json:"media_ids,omitempty"`
+	// MediaURLs are public external URLs: a []string, or a []MediaURLEntry
+	// (or mixed []any) for per-media alt text.
+	MediaURLs any `json:"media_urls,omitempty"`
 }
 
 // XPostOptions holds X (Twitter) specific options for post creation.

@@ -169,6 +169,25 @@ type Post struct {
 	Source    *string           `json:"source,omitempty"`
 	CreatedAt string            `json:"created_at,omitempty"`
 	UpdatedAt string            `json:"updated_at,omitempty"`
+	// RetryOf is set when this post was created by the dashboard "retry as
+	// new post" flow: the ID of the original failed post it retries.
+	RetryOf string `json:"retry_of,omitempty"`
+	// Retries is set on a post that has been retried as a new post: the IDs
+	// of its retry posts. A "published" post with empty PublishedURLs and
+	// Retries set is a resolved failure, not a second publish.
+	Retries []string `json:"retries,omitempty"`
+}
+
+// PostRetryResult is the data payload of Posts.Retry.
+type PostRetryResult struct {
+	// ID of the post being retried.
+	ID string `json:"id"`
+	// Status of the post after queueing, e.g. "posting".
+	Status string `json:"status"`
+	// Platforms are the failed platforms being retried.
+	Platforms []string `json:"platforms"`
+	// Message is a human-readable confirmation.
+	Message string `json:"message"`
 }
 
 // RecentPlatformPostsResponse is the Posts.RecentPlatform response: recent
@@ -273,6 +292,19 @@ func (s *PostsService) Delete(ctx context.Context, id string) error {
 func (s *PostsService) Publish(ctx context.Context, id string) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/publish", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Retry calls `POST /posts/:id/retry`: retry the failed platforms of a
+// "failed" or "warning" (partially failed) post, on the same post. Only the
+// platforms that failed are re-published; platforms that already succeeded
+// are never posted again. Asynchronous: a 200 means the retry is queued -
+// poll Get for the outcome. Max 3 retries per platform.
+func (s *PostsService) Retry(ctx context.Context, id string) (*ItemResponse[PostRetryResult], error) {
+	var out ItemResponse[PostRetryResult]
+	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/retry", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

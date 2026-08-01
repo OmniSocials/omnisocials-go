@@ -178,15 +178,18 @@ _, err = client.Posts.Update(ctx, postID, &omnisocials.PostUpdateParams{
 })
 ```
 
-### List, get, update, publish, delete
+### List, get, update, publish, retry, delete
 
 ```go
 list, err := client.Posts.List(ctx, &omnisocials.PostListParams{Status: "scheduled", Limit: 50})
 one, err := client.Posts.Get(ctx, list.Data[0].ID)
 _, err = client.Posts.Update(ctx, one.Data.ID, &omnisocials.PostUpdateParams{ScheduledAt: "2026-08-02T10:00:00Z"})
 _, err = client.Posts.Publish(ctx, one.Data.ID) // publish a draft/scheduled post now
+_, err = client.Posts.Retry(ctx, one.Data.ID)   // retry only the failed platforms of a failed/warning post
 err = client.Posts.Delete(ctx, one.Data.ID)     // 204 on success
 ```
+
+`Retry` re-publishes only the platforms that failed, on the same post; platforms that already succeeded are never posted again. It is asynchronous: a 200 means the retry is queued, so poll `Get` for the outcome. Max 3 retries per platform.
 
 ### Recent platform posts
 

@@ -56,8 +56,9 @@ func Float64(v float64) *float64 { return &v }
 // MediaURLEntry is one media_urls entry carrying per-media alt text
 // (accessibility description, max 1500 chars). Alt text is delivered to
 // Mastodon (media description), Bluesky (embed alt), X (photo/GIF media
-// metadata), and Pinterest (pin alt_text fallback). Plain string entries and
-// MediaURLEntry values can be mixed in the same []any slice.
+// metadata), Pinterest (pin alt_text fallback), Instagram (images), and
+// LinkedIn (images). Plain string entries and MediaURLEntry values can be
+// mixed in the same []any slice.
 type MediaURLEntry struct {
 	// URL is the public media URL.
 	URL string `json:"url"`

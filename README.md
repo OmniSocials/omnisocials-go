@@ -117,7 +117,7 @@ _, err = client.Posts.CreateAndPublish(ctx, &omnisocials.PostCreateParams{
 
 ### Per-media alt text
 
-Every `MediaURLs` / `MediaIDs` entry accepts either a plain string or a `MediaURLEntry` / `MediaIDEntry` with an `Alt` accessibility description (max 1500 chars). Alt text is delivered to Mastodon (media description), Bluesky (embed alt), X (photos and GIFs), and Pinterest (pin alt text). Strings and entry structs can be mixed in a `[]any`, and the same shapes work in per-platform maps and `ThreadPart` media.
+Every `MediaURLs` / `MediaIDs` entry accepts either a plain string or a `MediaURLEntry` / `MediaIDEntry` with an `Alt` accessibility description (max 1500 chars). Alt text is delivered to Mastodon (media description), Bluesky (embed alt), X (photos and GIFs), Pinterest (pin alt text), Instagram (images), and LinkedIn (images). Strings and entry structs can be mixed in a `[]any`, and the same shapes work in per-platform maps and `ThreadPart` media.
 
 ```go
 _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
@@ -193,7 +193,7 @@ err = client.Posts.Delete(ctx, one.Data.ID)     // 204 on success
 
 ### Recent platform posts
 
-Fetch recent posts live from the connected platform APIs, including content published outside OmniSocials. Useful for brand-new workspaces where `List` is empty. Requires the `analytics:read` scope.
+Fetch recent posts live from the connected platform APIs, including content published outside OmniSocials. Useful for brand-new workspaces where `List` is empty. Requires the `analytics:read` scope. Each record includes `duration_seconds` (integer, nullable): the video length in whole seconds where the platform reports it — currently TikTok and YouTube; `null` for images and for platforms that don't expose it.
 
 ```go
 recent, err := client.Posts.RecentPlatform(ctx, &omnisocials.RecentPlatformPostsParams{

@@ -22,6 +22,35 @@ type Pagination struct {
 type ItemResponse[T any] struct {
 	Data    T      `json:"data"`
 	Message string `json:"message,omitempty"`
+	// Warnings are non-blocking notices, present only on post create
+	// responses that trigger one (currently only x_url_post_credits — X's
+	// link-post fee passed through as prepaid credits). Nil otherwise.
+	Warnings []PostWarning `json:"warnings,omitempty"`
+}
+
+// PostWarning is one entry of the optional top-level `warnings` array on post
+// create responses. Currently only code "x_url_post_credits": X bills API
+// posts whose text contains a URL at a premium, and OmniSocials passes that
+// through as prepaid credits (20 credits per URL-containing tweet; threads
+// billed per part with a link). Debiting starts at EnforceFrom (2026-08-14);
+// if the company balance can't cover it at publish time, only the X target
+// fails and can be retried after topping up in the dashboard (Settings ->
+// Organisation -> Billing -> Credits). Posts without links stay free.
+type PostWarning struct {
+	// Code is the warning identifier, e.g. "x_url_post_credits".
+	Code string `json:"code"`
+	// Message is a human-readable explanation.
+	Message string `json:"message"`
+	// CreditsRequired is the credits this post will use when it publishes.
+	CreditsRequired int `json:"credits_required,omitempty"`
+	// CreditsBalance is the company's current credit balance (nil if
+	// unavailable).
+	CreditsBalance *int `json:"credits_balance,omitempty"`
+	// Enforced reports whether the credit debit is enforced yet
+	// (warning-only before EnforceFrom).
+	Enforced bool `json:"enforced,omitempty"`
+	// EnforceFrom is the ISO date enforcement starts, e.g. "2026-08-14".
+	EnforceFrom string `json:"enforce_from,omitempty"`
 }
 
 // ListResponse is the list envelope `{ "data": [...], "pagination": {...} }`.

@@ -254,7 +254,11 @@ func (s *PostsService) RecentPlatform(ctx context.Context, params *RecentPlatfor
 	return &out, nil
 }
 
-// Create calls `POST /posts/create`: create a draft or scheduled post.
+// Create calls `POST /posts/create`: create a draft or scheduled post. When
+// the post targets X and its text (or any thread part) contains a URL, the
+// response's Warnings field carries a PostWarning with code
+// "x_url_post_credits" (X's link-post fee, passed through as prepaid credits
+// at publish time).
 func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create", jsonBody(params), &out); err != nil {
@@ -264,7 +268,7 @@ func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*I
 }
 
 // CreateAndPublish calls `POST /posts/create-and-publish`: create a post and
-// publish it immediately.
+// publish it immediately. See Create for the Warnings field on X link posts.
 func (s *PostsService) CreateAndPublish(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create-and-publish", jsonBody(params), &out); err != nil {

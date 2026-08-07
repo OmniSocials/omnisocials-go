@@ -77,7 +77,7 @@ The API allows **100 requests per minute** per API key. When you exceed it, the 
 
 ## Return values
 
-Methods return the parsed response body as-is: single items come back as `ItemResponse[T]` (`{ "data": {...} }`), lists as `ListResponse[T]` (`{ "data": [...], "pagination": {...} }`), and some responses carry extra sibling fields (media uploads include `Compatibility`, PDF uploads include `Slides` and `MediaIDs`). Endpoints that respond `204 No Content` (deletes) return only an `error`.
+Methods return the parsed response body as-is: single items come back as `ItemResponse[T]` (`{ "data": {...} }`), lists as `ListResponse[T]` (`{ "data": [...], "pagination": {...} }`), and some responses carry extra sibling fields (media uploads include `Compatibility`, PDF uploads include `Slides` and `MediaIDs`, post creates targeting X with a URL in the text include `Warnings`). Endpoints that respond `204 No Content` (deletes) return only an `error`.
 
 ## Posts
 
@@ -177,6 +177,24 @@ _, err = client.Posts.Update(ctx, postID, &omnisocials.PostUpdateParams{
 	X: &omnisocials.XPostOptionsUpdate{ThreadParts: omnisocials.Null},
 })
 ```
+
+### X link posts use credits
+
+X bills API posts whose text contains a URL at a premium, and OmniSocials passes that fee through as prepaid credits (20 credits per URL-containing tweet; threads billed per part with a link). When a create targets X and the text contains a URL, the response's `Warnings` field carries a `PostWarning` with code `x_url_post_credits`:
+
+```go
+res, err := client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:  "Read the full story: https://example.com/post",
+	Channels: []string{"x"},
+})
+for _, w := range res.Warnings {
+	if w.Code == "x_url_post_credits" {
+		fmt.Println(w.CreditsRequired, w.Message)
+	}
+}
+```
+
+From `EnforceFrom` (2026-08-14) the balance is checked at publish time, but credits are only deducted after the post successfully publishes (a failed publish is never charged). If the balance can't cover it, only the X target fails (other platforms publish normally); top up in the dashboard under Settings -> Organisation -> Billing -> Credits, then `Posts.Retry`. Posts without links, analytics, and media on X stay free. There is no API endpoint for credits — they are managed in the dashboard.
 
 ### List, get, update, publish, retry, delete
 

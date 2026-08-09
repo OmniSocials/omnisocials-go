@@ -196,6 +196,22 @@ for _, w := range res.Warnings {
 
 From `EnforceFrom` (2026-08-14) the balance is checked at publish time, but credits are only deducted after the post successfully publishes (a failed publish is never charged). If the balance can't cover it, only the X target fails (other platforms publish normally); top up in the dashboard under Settings -> Organisation -> Billing -> Credits, then `Posts.Retry`. Posts without links, analytics, and media on X stay free. There is no API endpoint for credits — they are managed in the dashboard.
 
+**Schedule-time gate.** Separately, every scheduled X link post *reserves* its cost until it publishes (shown as an orange "reserved" slice on the dashboard's credits page). `Posts.Create` (non-draft), `Posts.CreateAndPublish`, `Posts.Update` (when it schedules or edits a scheduled X link post), and `Posts.Publish` all refuse up front with a 402 error whose `Code` is `x_credits_insufficient` when this post's cost plus what's already reserved by other scheduled X link posts would exceed the balance. 402 isn't one of the SDK's typed error subclasses, so match it against the base `*APIError` and check `Code`:
+
+```go
+_, err := client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:     "Read the full story: https://example.com/post",
+	Channels:    []string{"x"},
+	ScheduledAt: "2026-08-15T09:00:00Z",
+})
+var apiErr *omnisocials.APIError
+if errors.As(err, &apiErr) && apiErr.Code == "x_credits_insufficient" {
+	log.Printf("not enough credits: %v", apiErr.Body)
+}
+```
+
+Drafts are never gated (the check runs when a draft is scheduled or published), and posts publishing before `EnforceFrom` are never gated. This gate is separate from the `x_url_post_credits` warning above (create-time, non-blocking) and from the publish-time-only-X-target-fails behavior.
+
 ### List, get, update, publish, retry, delete
 
 ```go
@@ -504,6 +520,52 @@ func main() {
 ```
 
 `VerifyWebhookSignature` uses a constant-time comparison, rejects timestamps older than the tolerance (replay protection), returns a `*WebhookVerificationError` on any failure, and returns the parsed event on success.
+
+## Inbox
+
+Social inbox conversations (DMs, comments, and mentions) across connected platforms.
+
+```go
+conversations, err := client.Inbox.ListConversations(ctx, &omnisocials.InboxListParams{
+	Platform: "instagram",
+	Unread:   omnisocials.Bool(true),
+	Limit:    20,
+})
+for _, c := range conversations.Data {
+	fmt.Println(c.Platform, c.Type, c.Participant.Username, c.UnreadCount)
+}
+
+// Cursor pagination: pass the previous page's NextCursor while HasMore is true.
+if conversations.Pagination != nil && conversations.Pagination.HasMore {
+	next, err := client.Inbox.ListConversations(ctx, &omnisocials.InboxListParams{
+		Cursor: *conversations.Pagination.NextCursor,
+	})
+	_ = next
+}
+
+thread, err := client.Inbox.GetMessages(ctx, conversations.Data[0].ConversationID, nil)
+_, err = client.Inbox.MarkRead(ctx, conversations.Data[0].ConversationID)
+
+reply, err := client.Inbox.Reply(ctx, conversations.Data[0].ConversationID, &omnisocials.InboxReplyParams{
+	Text: "Thanks for reaching out!",
+})
+fmt.Println(reply.Data.ID, reply.Data.Direction)
+```
+
+**X (Twitter) DM credits.** X DMs are supported once a workspace opts in (dashboard-only). Replying on an X conversation costs **2 prepaid credits** per send (X's per-request fee), debited before the send and auto-refunded if it fails. `Reply` returns two X-specific 402 codes, neither of which is one of the SDK's typed error subclasses — match them against the base `*APIError`:
+
+```go
+_, err = client.Inbox.Reply(ctx, xConversationID, &omnisocials.InboxReplyParams{Text: "On it!"})
+var apiErr *omnisocials.APIError
+if errors.As(err, &apiErr) {
+	switch apiErr.Code {
+	case "insufficient_credits":
+		log.Println("balance can't cover the 2-credit send")
+	case "x_inbox_suspended":
+		log.Println("workspace's X inbox is suspended, top up and re-enable in the dashboard")
+	}
+}
+```
 
 ## Health
 

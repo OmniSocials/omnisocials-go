@@ -7,7 +7,10 @@ import (
 )
 
 // InboxService covers the /inbox endpoints: the social inbox (DMs, comments,
-// and mentions) across connected platforms.
+// and mentions) across connected platforms. X (Twitter) DMs cost credits: a
+// received DM debits 1 credit, and each Reply send debits 2 credits
+// up front (auto-refunded if the send fails) — see Reply for the two 402
+// error codes this can return.
 type InboxService struct {
 	client *Client
 }
@@ -50,7 +53,7 @@ type InboxPostRef struct {
 // InboxLastMessage is the latest message preview on a conversation.
 type InboxLastMessage struct {
 	ID string `json:"id"`
-	// Direction is "inbound" (from the participant) or "outbound" (from you).
+	// Direction is "incoming" (from the participant) or "outgoing" (from you).
 	Direction string `json:"direction"`
 	Text      string `json:"text"`
 	Timestamp string `json:"timestamp"`
@@ -61,7 +64,7 @@ type InboxLastMessage struct {
 type InboxConversation struct {
 	ConversationID string `json:"conversation_id"`
 	// Platform is the platform identifier, e.g. "instagram", "facebook",
-	// "linkedin".
+	// "linkedin", or "x".
 	Platform string `json:"platform"`
 	// Type is the conversation kind: "dm", "comment", or "mention".
 	Type        string           `json:"type"`
@@ -77,11 +80,11 @@ type InboxMessage struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversation_id"`
 	// Platform is the platform identifier, e.g. "instagram", "facebook",
-	// "linkedin".
+	// "linkedin", or "x".
 	Platform string `json:"platform"`
 	// Type is the message kind: "dm", "comment", or "mention".
 	Type string `json:"type"`
-	// Direction is "inbound" (from the sender) or "outbound" (from you).
+	// Direction is "incoming" (from the sender) or "outgoing" (from you).
 	Direction string `json:"direction"`
 	Text      string `json:"text"`
 	Timestamp string `json:"timestamp"`
@@ -109,7 +112,8 @@ type InboxMarkReadResponse struct {
 // pass a previous response's Pagination.NextCursor as Cursor to page on while
 // Pagination.HasMore is true.
 type InboxListParams struct {
-	// Platform filters by platform: "instagram", "facebook", or "linkedin".
+	// Platform filters by platform: "instagram", "facebook", "linkedin", or
+	// "x".
 	Platform string
 	// Type filters by conversation kind: "dm", "comment", or "mention".
 	Type string
@@ -212,6 +216,15 @@ func (s *InboxService) MarkRead(ctx context.Context, conversationID string) (*In
 // Optionally attach a single media asset by public URL with AttachmentURL +
 // AttachmentType. Returns the created outbound message. The id is URL-encoded
 // for you.
+//
+// Replying on an X DM conversation costs 2 prepaid company credits (X's
+// per-send fee), debited before the send and automatically refunded if the
+// send fails. Two 402 *APIError codes are specific to X: "insufficient_credits"
+// (the balance can't cover the 2 credits) and "x_inbox_suspended" (the
+// workspace's X inbox auto-suspended when the balance hit zero; top up and
+// re-enable X DMs in the dashboard to resume — DMs that arrived while
+// suspended are not recovered). Neither code is one of the SDK's typed error
+// subclasses, so match them with errors.As against *APIError and check Code.
 func (s *InboxService) Reply(ctx context.Context, conversationID string, params *InboxReplyParams) (*ItemResponse[InboxMessage], error) {
 	var out ItemResponse[InboxMessage]
 	if err := s.client.post(ctx, "/inbox/conversations/"+url.PathEscape(conversationID)+"/reply", jsonBody(params), &out); err != nil {

@@ -259,6 +259,18 @@ func (s *PostsService) RecentPlatform(ctx context.Context, params *RecentPlatfor
 // response's Warnings field carries a PostWarning with code
 // "x_url_post_credits" (X's link-post fee, passed through as prepaid credits
 // at publish time).
+//
+// Separately, a non-draft Create (ScheduledAt set) reserves the post's
+// credit cost up front: if that would push the company's total reserved
+// credits for scheduled X link posts past its balance, Create returns a 402
+// *APIError with Code "x_credits_insufficient" and Body carrying
+// error.details {credits_required, credits_balance, credits_reserved} (402
+// isn't one of the typed subclasses, so match it with errors.As against
+// *APIError and check Status/Code). Drafts are never gated, and posts
+// publishing before 2026-08-14 are never gated. The same gate applies to
+// CreateAndPublish, Update, and Publish. It is distinct from the
+// x_url_post_credits warning above (create-time, non-blocking) and from the
+// publish-time-only-X-target-fails behavior once enforcement starts.
 func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create", jsonBody(params), &out); err != nil {
@@ -268,7 +280,9 @@ func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*I
 }
 
 // CreateAndPublish calls `POST /posts/create-and-publish`: create a post and
-// publish it immediately. See Create for the Warnings field on X link posts.
+// publish it immediately. See Create for the Warnings field on X link posts
+// and the 402 "x_credits_insufficient" schedule-time credit gate (it also
+// applies here, since this is a non-draft create).
 func (s *PostsService) CreateAndPublish(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create-and-publish", jsonBody(params), &out); err != nil {
@@ -277,7 +291,10 @@ func (s *PostsService) CreateAndPublish(ctx context.Context, params *PostCreateP
 	return &out, nil
 }
 
-// Update calls `PATCH /posts/:id`: update a draft or scheduled post.
+// Update calls `PATCH /posts/:id`: update a draft or scheduled post. See
+// Create for the 402 "x_credits_insufficient" schedule-time credit gate: it
+// also applies here when the update schedules a draft, adds X, or edits the
+// text/link of a scheduled X link post.
 func (s *PostsService) Update(ctx context.Context, id string, params *PostUpdateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.patch(ctx, "/posts/"+url.PathEscape(id), jsonBody(params), &out); err != nil {
@@ -292,7 +309,9 @@ func (s *PostsService) Delete(ctx context.Context, id string) error {
 }
 
 // Publish calls `POST /posts/:id/publish`: publish a draft or scheduled post
-// now.
+// now. See Create for the 402 "x_credits_insufficient" schedule-time credit
+// gate: it also runs here as a pre-flight check before an X link post is
+// queued to publish.
 func (s *PostsService) Publish(ctx context.Context, id string) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/publish", nil, &out); err != nil {

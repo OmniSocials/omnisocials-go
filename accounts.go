@@ -40,9 +40,19 @@ type Account struct {
 	PlatformDetails map[string]any `json:"platform_details,omitempty"`
 }
 
+// AccountsListResponse is the Accounts.List response envelope.
+type AccountsListResponse struct {
+	Data []Account `json:"data"`
+	// WorkspaceID is the stable id of the active workspace this key belongs to.
+	WorkspaceID int `json:"workspace_id,omitempty"`
+	// WorkspaceName is the human-readable name of the active workspace.
+	WorkspaceName *string `json:"workspace_name,omitempty"`
+	WorkspaceIcon *string `json:"workspace_icon,omitempty"`
+}
+
 // List calls `GET /accounts`: the workspace's connected social accounts.
-func (s *AccountsService) List(ctx context.Context) (*ListResponse[Account], error) {
-	var out ListResponse[Account]
+func (s *AccountsService) List(ctx context.Context) (*AccountsListResponse, error) {
+	var out AccountsListResponse
 	if err := s.client.get(ctx, "/accounts", nil, &out); err != nil {
 		return nil, err
 	}

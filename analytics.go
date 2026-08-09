@@ -63,6 +63,9 @@ type AnalyticsOverviewResponse struct {
 	Period    string `json:"period,omitempty"`
 	StartDate string `json:"start_date,omitempty"`
 	EndDate   string `json:"end_date,omitempty"`
+	// CurrentDate is today's date (YYYY-MM-DD), server-side — useful for
+	// grounding relative date calculations (e.g. "this month").
+	CurrentDate string `json:"current_date,omitempty"`
 }
 
 // AnalyticsOverviewParams filters Analytics.Overview. Use either Period, or

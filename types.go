@@ -172,6 +172,28 @@ type MastodonPostOptionsUpdate struct {
 	ThreadParts any `json:"thread_parts,omitempty"`
 }
 
+// ---- LinkedIn poll -----------------------------------------------------------
+
+// LinkedInPoll is a non-sponsored LinkedIn poll (question + 2-4 options +
+// duration). Mutually exclusive with media and a link share on that
+// channel's post - a poll takes priority over both at publish time.
+type LinkedInPoll struct {
+	// Question is the poll question (max 140 characters).
+	Question string `json:"question"`
+	// Options are 2-4 answer options (max 30 characters each).
+	Options []string `json:"options"`
+	// Duration: "ONE_DAY", "THREE_DAYS", "SEVEN_DAYS", or "FOURTEEN_DAYS".
+	Duration string `json:"duration"`
+}
+
+// LinkedInPolls holds a poll per LinkedIn channel, independent of each
+// other - LinkedIn (personal profile) and LinkedInPage (company page) can
+// each carry their own poll, or none.
+type LinkedInPolls struct {
+	LinkedIn     *LinkedInPoll `json:"linkedin,omitempty"`
+	LinkedInPage *LinkedInPoll `json:"linkedin_page,omitempty"`
+}
+
 // ---- Misc shared types --------------------------------------------------------
 
 // UserTag is an Instagram photo user tag: a username positioned at relative

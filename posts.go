@@ -67,6 +67,10 @@ type PostCreateParams struct {
 	Bluesky        *BlueskyPostOptions  `json:"bluesky,omitempty"`
 	Mastodon       *MastodonPostOptions `json:"mastodon,omitempty"`
 	GoogleBusiness map[string]any       `json:"google_business,omitempty"`
+	// LinkedInPoll holds non-sponsored LinkedIn poll(s), independent per
+	// channel. Mutually exclusive with media and a link share on that
+	// channel's post - a poll takes priority over both at publish time.
+	LinkedInPoll *LinkedInPolls `json:"linkedin_poll,omitempty"`
 }
 
 // PostUpdateParams is the request body for Posts.Update. Only set fields are
@@ -99,6 +103,12 @@ type PostUpdateParams struct {
 	// Mastodon: set ThreadParts to omnisocials.Null to clear thread mode.
 	Mastodon       *MastodonPostOptionsUpdate `json:"mastodon,omitempty"`
 	GoogleBusiness map[string]any             `json:"google_business,omitempty"`
+	// LinkedInPoll replaces wholesale - send the full desired state for
+	// both channels. Leave nil to leave both channels' polls untouched, set
+	// a *LinkedInPolls to add/replace poll(s), or set a channel field to
+	// omnisocials.Null within a map[string]any payload to clear just that
+	// channel's poll and revert it to a normal post.
+	LinkedInPoll any `json:"linkedin_poll,omitempty"`
 }
 
 // PostListParams filters Posts.List.
@@ -163,6 +173,9 @@ type Post struct {
 	Bluesky        map[string]any `json:"bluesky,omitempty"`
 	Mastodon       map[string]any `json:"mastodon,omitempty"`
 	GoogleBusiness map[string]any `json:"google_business,omitempty"`
+	// LinkedInPoll holds the non-sponsored LinkedIn poll(s) on this post,
+	// echoed back per channel when either is one.
+	LinkedInPoll *LinkedInPolls `json:"linkedin_poll,omitempty"`
 	// Errors maps platform -> user-friendly error message. Populated when
 	// Status is "failed" or "warning"; only failed platforms appear.
 	Errors    map[string]string `json:"errors,omitempty"`

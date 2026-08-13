@@ -64,7 +64,7 @@ type InboxLastMessage struct {
 type InboxConversation struct {
 	ConversationID string `json:"conversation_id"`
 	// Platform is the platform identifier, e.g. "instagram", "facebook",
-	// "linkedin", or "x".
+	// "linkedin", "tiktok", or "x".
 	Platform string `json:"platform"`
 	// Type is the conversation kind: "dm", "comment", or "mention".
 	Type        string           `json:"type"`
@@ -80,7 +80,7 @@ type InboxMessage struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversation_id"`
 	// Platform is the platform identifier, e.g. "instagram", "facebook",
-	// "linkedin", or "x".
+	// "linkedin", "tiktok", or "x".
 	Platform string `json:"platform"`
 	// Type is the message kind: "dm", "comment", or "mention".
 	Type string `json:"type"`
@@ -112,8 +112,8 @@ type InboxMarkReadResponse struct {
 // pass a previous response's Pagination.NextCursor as Cursor to page on while
 // Pagination.HasMore is true.
 type InboxListParams struct {
-	// Platform filters by platform: "instagram", "facebook", "linkedin", or
-	// "x".
+	// Platform filters by platform: "instagram", "facebook", "linkedin",
+	// "tiktok", or "x".
 	Platform string
 	// Type filters by conversation kind: "dm", "comment", or "mention".
 	Type string

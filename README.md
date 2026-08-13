@@ -523,7 +523,7 @@ func main() {
 
 ## Inbox
 
-Social inbox conversations (DMs, comments, and mentions) across connected platforms.
+Social inbox conversations (DMs, comments, and mentions) across connected platforms: Instagram, Facebook, LinkedIn, TikTok (video comments only), and X (DMs). TikTok replies are comments only and capped at 150 characters.
 
 ```go
 conversations, err := client.Inbox.ListConversations(ctx, &omnisocials.InboxListParams{

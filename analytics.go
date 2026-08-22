@@ -20,6 +20,17 @@ type PostAnalyticsPlatformEntry struct {
 	Metrics        map[string]any `json:"metrics"`
 	ThreadParts    int            `json:"thread_parts,omitempty"`
 	CollectedAt    string         `json:"collected_at,omitempty"`
+	// StorySlides is set for multi-slide stories only: per-slide metrics in
+	// publish order (Metrics is the sum across slides).
+	StorySlides []PostAnalyticsStorySlide `json:"story_slides,omitempty"`
+}
+
+// PostAnalyticsStorySlide is one slide's own metrics inside a multi-slide story.
+type PostAnalyticsStorySlide struct {
+	Index          int            `json:"index"`
+	PlatformPostID string         `json:"platform_post_id,omitempty"`
+	Metrics        map[string]any `json:"metrics"`
+	CollectedAt    string         `json:"collected_at,omitempty"`
 }
 
 // PostAnalytics is the per-post analytics payload: one entry per platform the

@@ -113,8 +113,9 @@ type PostUpdateParams struct {
 
 // PostListParams filters Posts.List.
 type PostListParams struct {
-	// Status filters by post status, e.g. "draft", "scheduled", "published",
-	// "failed".
+	// Status filters by post status: "draft", "in_approval", "scheduled",
+	// "posting", "published", "failed", "warning". "in_approval" = waiting for
+	// a reviewer in an approval workflow.
 	Status string
 	// Limit is the max items to return (default 20, max 100).
 	Limit int
@@ -132,6 +133,16 @@ type RecentPlatformPostsParams struct {
 }
 
 // Post is a post as returned by the API.
+// StorySlide is one published slide of a multi-slide story.
+type StorySlide struct {
+	Index        int     `json:"index"`
+	NativePostID string  `json:"native_post_id"`
+	URL          *string `json:"url,omitempty"`
+	MediaURL     *string `json:"media_url,omitempty"`
+	MediaType    string  `json:"media_type,omitempty"`
+	PublishedAt  *string `json:"published_at,omitempty"`
+}
+
 type Post struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
@@ -151,14 +162,17 @@ type Post struct {
 	// AppURL is a deep link to this post inside the OmniSocials app.
 	AppURL string `json:"app_url,omitempty"`
 	// PublishedURLs maps platform -> live post URL once published.
-	PublishedURLs    map[string]string `json:"published_urls,omitempty"`
-	LocationID       string            `json:"location_id,omitempty"`
-	Collaborators    []string          `json:"collaborators,omitempty"`
-	UserTags         []UserTag         `json:"user_tags,omitempty"`
-	LinkURL          string            `json:"link_url,omitempty"`
-	LinkTitle        string            `json:"link_title,omitempty"`
-	LinkDescription  string            `json:"link_description,omitempty"`
-	LinkThumbnailURL string            `json:"link_thumbnail_url,omitempty"`
+	PublishedURLs map[string]string `json:"published_urls,omitempty"`
+	// StorySlides lists every published slide per platform for multi-slide
+	// stories (PublishedURLs keeps only the first slide).
+	StorySlides      map[string][]StorySlide `json:"story_slides,omitempty"`
+	LocationID       string                  `json:"location_id,omitempty"`
+	Collaborators    []string                `json:"collaborators,omitempty"`
+	UserTags         []UserTag               `json:"user_tags,omitempty"`
+	LinkURL          string                  `json:"link_url,omitempty"`
+	LinkTitle        string                  `json:"link_title,omitempty"`
+	LinkDescription  string                  `json:"link_description,omitempty"`
+	LinkThumbnailURL string                  `json:"link_thumbnail_url,omitempty"`
 	// Per-platform options echoed back in the request shape (X, Bluesky, and
 	// Mastodon include thread_parts; comment-capable platforms include
 	// first_comment / first_comment_result).

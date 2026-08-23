@@ -104,11 +104,13 @@ type MediaIDEntry struct {
 	Alt string `json:"alt,omitempty"`
 }
 
-// ---- Thread parts (X / Bluesky / Mastodon) ----------------------------------
+// ---- Thread parts (X / Bluesky / Mastodon / Threads) -------------------------
 
 // ThreadPart is one segment of a thread on X (max 280 chars), Bluesky
-// (max 300 graphemes), or Mastodon (max 500 chars by default). Each part can
-// carry up to 4 media items (MediaIDs + MediaURLs combined).
+// (max 300 graphemes), Mastodon (max 500 chars by default), or Threads
+// (max 500 chars). Each part can carry up to 4 media items (MediaIDs +
+// MediaURLs combined); Threads allows up to 10 per part, images and videos
+// mixed.
 type ThreadPart struct {
 	// Text is the part's text.
 	Text string `json:"text"`
@@ -169,6 +171,22 @@ type MastodonPostOptionsUpdate struct {
 	// ThreadParts: leave nil to keep the existing thread untouched, set a
 	// []ThreadPart to replace it, or set omnisocials.Null to clear thread
 	// mode (revert to a single status).
+	ThreadParts any `json:"thread_parts,omitempty"`
+}
+
+// ThreadsPostOptions holds Threads (Meta) specific options for post creation.
+type ThreadsPostOptions struct {
+	// ThreadParts: provide 2-25 parts to publish as a chained thread; parts
+	// after the first publish as replies to the previous part, and the
+	// Threads caption is taken from part 1. Omit for a single post.
+	ThreadParts []ThreadPart `json:"thread_parts,omitempty"`
+}
+
+// ThreadsPostOptionsUpdate is the update-side variant of ThreadsPostOptions.
+type ThreadsPostOptionsUpdate struct {
+	// ThreadParts: leave nil to keep the existing thread untouched, set a
+	// []ThreadPart to replace it, or set omnisocials.Null to clear thread
+	// mode (revert to a single post).
 	ThreadParts any `json:"thread_parts,omitempty"`
 }
 

@@ -150,9 +150,9 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 })
 ```
 
-### X thread
+### Chained threads (X, Bluesky, Mastodon, Threads)
 
-Provide 2 to 25 `ThreadParts` to publish a chained thread instead of a single tweet. Each part is capped at 280 characters and can carry its own media. The same `ThreadPart` shape works for `Bluesky` (300 chars per part) and `Mastodon` (500 chars per part).
+Provide 2 to 25 `ThreadParts` to publish a chained thread instead of a single tweet. Each part is capped at 280 characters and can carry its own media. The same `ThreadPart` shape works for `Bluesky` (300 chars per part), `Mastodon` (500 chars per part) and `Threads` (Meta Threads: 2 to 25 parts, 500 characters per part, up to 10 media per part; parts after the first publish as replies to the previous part, and the Threads caption is taken from part 1).
 
 ```go
 _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
@@ -170,11 +170,27 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 })
 ```
 
-On update, set `ThreadParts: omnisocials.Null` to clear thread mode (revert to a single post); leave it nil to keep the existing thread untouched:
+```go
+// Meta Threads chain with a carousel on the first part
+_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:  "Behind the scenes of our summer shoot",
+	Channels: []string{"threads"},
+	Threads: &omnisocials.ThreadsPostOptions{
+		ThreadParts: []omnisocials.ThreadPart{
+			{Text: "Behind the scenes of our summer shoot. A few highlights:", MediaURLs: []string{"https://example.com/shoot-1.jpg", "https://example.com/shoot-2.jpg"}},
+			{Text: "Day one: scouting locations at sunrise."},
+			{Text: "Day two: the full crew, 14 hours, zero regrets."},
+		},
+	},
+})
+```
+
+On update, set `ThreadParts: omnisocials.Null` to clear thread mode (revert to a single post); leave it nil to keep the existing thread untouched. The same works for `Bluesky`, `Mastodon` and `Threads`:
 
 ```go
 _, err = client.Posts.Update(ctx, postID, &omnisocials.PostUpdateParams{
-	X: &omnisocials.XPostOptionsUpdate{ThreadParts: omnisocials.Null},
+	X:       &omnisocials.XPostOptionsUpdate{ThreadParts: omnisocials.Null},
+	Threads: &omnisocials.ThreadsPostOptionsUpdate{ThreadParts: omnisocials.Null},
 })
 ```
 

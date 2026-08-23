@@ -66,6 +66,7 @@ type PostCreateParams struct {
 	X              *XPostOptions        `json:"x,omitempty"`
 	Bluesky        *BlueskyPostOptions  `json:"bluesky,omitempty"`
 	Mastodon       *MastodonPostOptions `json:"mastodon,omitempty"`
+	Threads        *ThreadsPostOptions  `json:"threads,omitempty"`
 	GoogleBusiness map[string]any       `json:"google_business,omitempty"`
 	// LinkedInPoll holds non-sponsored LinkedIn poll(s), independent per
 	// channel. Mutually exclusive with media and a link share on that
@@ -101,8 +102,10 @@ type PostUpdateParams struct {
 	// Bluesky: set ThreadParts to omnisocials.Null to clear thread mode.
 	Bluesky *BlueskyPostOptionsUpdate `json:"bluesky,omitempty"`
 	// Mastodon: set ThreadParts to omnisocials.Null to clear thread mode.
-	Mastodon       *MastodonPostOptionsUpdate `json:"mastodon,omitempty"`
-	GoogleBusiness map[string]any             `json:"google_business,omitempty"`
+	Mastodon *MastodonPostOptionsUpdate `json:"mastodon,omitempty"`
+	// Threads: set ThreadParts to omnisocials.Null to clear thread mode.
+	Threads        *ThreadsPostOptionsUpdate `json:"threads,omitempty"`
+	GoogleBusiness map[string]any            `json:"google_business,omitempty"`
 	// LinkedInPoll replaces wholesale - send the full desired state for
 	// both channels. Leave nil to leave both channels' polls untouched, set
 	// a *LinkedInPolls to add/replace poll(s), or set a channel field to
@@ -173,9 +176,9 @@ type Post struct {
 	LinkTitle        string                  `json:"link_title,omitempty"`
 	LinkDescription  string                  `json:"link_description,omitempty"`
 	LinkThumbnailURL string                  `json:"link_thumbnail_url,omitempty"`
-	// Per-platform options echoed back in the request shape (X, Bluesky, and
-	// Mastodon include thread_parts; comment-capable platforms include
-	// first_comment / first_comment_result).
+	// Per-platform options echoed back in the request shape (X, Bluesky,
+	// Mastodon, and Threads include thread_parts; comment-capable platforms
+	// include first_comment / first_comment_result).
 	Pinterest      map[string]any `json:"pinterest,omitempty"`
 	YouTube        map[string]any `json:"youtube,omitempty"`
 	Instagram      map[string]any `json:"instagram,omitempty"`
@@ -186,6 +189,7 @@ type Post struct {
 	X              map[string]any `json:"x,omitempty"`
 	Bluesky        map[string]any `json:"bluesky,omitempty"`
 	Mastodon       map[string]any `json:"mastodon,omitempty"`
+	Threads        map[string]any `json:"threads,omitempty"`
 	GoogleBusiness map[string]any `json:"google_business,omitempty"`
 	// LinkedInPoll holds the non-sponsored LinkedIn poll(s) on this post,
 	// echoed back per channel when either is one.

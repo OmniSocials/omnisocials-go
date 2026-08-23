@@ -12,7 +12,7 @@ type AnalyticsService struct {
 }
 
 // PostAnalyticsPlatformEntry is one platform's latest metrics for a post. For
-// thread platforms (X, Bluesky, Mastodon) Metrics is summed across all parts
+// thread platforms (X, Bluesky, Mastodon, Threads) Metrics is summed across all parts
 // and PlatformPostID is the thread root; ThreadParts is 1 for single posts.
 type PostAnalyticsPlatformEntry struct {
 	Platform       string         `json:"platform"`

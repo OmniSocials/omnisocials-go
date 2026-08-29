@@ -174,12 +174,33 @@ type MastodonPostOptionsUpdate struct {
 	ThreadParts any `json:"thread_parts,omitempty"`
 }
 
+// ThreadsLocationInput is the object form of a Threads location tag on a
+// post: the id plus optional display fields to store along with it. See
+// ThreadsPostOptions.Location.
+type ThreadsLocationInput struct {
+	// ID is a Threads location id from Locations.SearchThreads.
+	ID      string `json:"id"`
+	Name    string `json:"name,omitempty"`
+	Address string `json:"address,omitempty"`
+	City    string `json:"city,omitempty"`
+	Country string `json:"country,omitempty"`
+}
+
 // ThreadsPostOptions holds Threads (Meta) specific options for post creation.
 type ThreadsPostOptions struct {
 	// ThreadParts: provide 2-25 parts to publish as a chained thread; parts
 	// after the first publish as replies to the previous part, and the
 	// Threads caption is taken from part 1. Omit for a single post.
 	ThreadParts []ThreadPart `json:"thread_parts,omitempty"`
+	// LocationID is a Threads location tag: a Threads location id from
+	// Locations.SearchThreads (Facebook Place ids are not interchangeable).
+	// On a multi-post thread the tag is applied to part 1. Threads location
+	// tagging is currently rolling out; until Meta approves the permissions
+	// it is disabled on production and calls return a clear error.
+	LocationID string `json:"location_id,omitempty"`
+	// Location is an alternative to LocationID: store display fields along
+	// with the id. LocationID wins when both are set.
+	Location *ThreadsLocationInput `json:"location,omitempty"`
 }
 
 // ThreadsPostOptionsUpdate is the update-side variant of ThreadsPostOptions.
@@ -188,6 +209,13 @@ type ThreadsPostOptionsUpdate struct {
 	// []ThreadPart to replace it, or set omnisocials.Null to clear thread
 	// mode (revert to a single post).
 	ThreadParts any `json:"thread_parts,omitempty"`
+	// LocationID: leave nil to keep the existing location tag untouched, set
+	// a string to (re)tag, or set omnisocials.Null to clear the tag.
+	LocationID any `json:"location_id,omitempty"`
+	// Location: leave nil to keep the existing tag untouched, set a
+	// *ThreadsLocationInput to (re)tag with display fields, or set
+	// omnisocials.Null to clear. LocationID wins when both are set.
+	Location any `json:"location,omitempty"`
 }
 
 // ---- LinkedIn poll -----------------------------------------------------------

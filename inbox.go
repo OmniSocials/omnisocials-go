@@ -64,7 +64,7 @@ type InboxLastMessage struct {
 type InboxConversation struct {
 	ConversationID string `json:"conversation_id"`
 	// Platform is the platform identifier, e.g. "instagram", "facebook",
-	// "linkedin", "tiktok", "youtube", or "x".
+	// "linkedin", "tiktok", "youtube", "x", or "threads".
 	Platform string `json:"platform"`
 	// Type is the conversation kind: "dm", "comment", or "mention".
 	Type        string           `json:"type"`
@@ -80,7 +80,7 @@ type InboxMessage struct {
 	ID             string `json:"id"`
 	ConversationID string `json:"conversation_id"`
 	// Platform is the platform identifier, e.g. "instagram", "facebook",
-	// "linkedin", "tiktok", "youtube", or "x".
+	// "linkedin", "tiktok", "youtube", "x", or "threads".
 	Platform string `json:"platform"`
 	// Type is the message kind: "dm", "comment", or "mention".
 	Type string `json:"type"`
@@ -94,8 +94,14 @@ type InboxMessage struct {
 	Reaction *string `json:"reaction,omitempty"`
 	// ParentCommentID is the parent comment id when this is a threaded comment
 	// reply.
-	ParentCommentID *string          `json:"parent_comment_id,omitempty"`
-	Sender          InboxParticipant `json:"sender"`
+	ParentCommentID *string `json:"parent_comment_id,omitempty"`
+	// Hidden is set on Threads replies only: true when the reply is hidden on
+	// Threads (see Hide). nil (JSON null) for every other platform/message.
+	Hidden *bool `json:"hidden,omitempty"`
+	// Permalink is a link to the reply or mentioning post on the platform,
+	// when known.
+	Permalink *string          `json:"permalink,omitempty"`
+	Sender    InboxParticipant `json:"sender"`
 	// Post is the related post for comment/mention messages; nil for DMs.
 	Post *InboxPostRef `json:"post,omitempty"`
 }
@@ -113,7 +119,7 @@ type InboxMarkReadResponse struct {
 // Pagination.HasMore is true.
 type InboxListParams struct {
 	// Platform filters by platform: "instagram", "facebook", "linkedin",
-	// "tiktok", "youtube", or "x".
+	// "tiktok", "youtube", "x", or "threads".
 	Platform string
 	// Type filters by conversation kind: "dm", "comment", or "mention".
 	Type string
@@ -153,6 +159,13 @@ type InboxReplyParams struct {
 // activity first. Filter by Platform, Type, and Unread. Cursor-paginated: pass
 // the previous response's Pagination.NextCursor as Cursor to page on while
 // Pagination.HasMore is true.
+//
+// Threads conversations are Type "comment" (replies people leave on your
+// Threads posts; ConversationID looks like `threads_comment_<rootPostId>`)
+// and "mention" (`threads_mention_<postId>`); there are no Threads DMs.
+// Threads inbox is currently rolling out; until Meta approves the permissions
+// it is disabled on production, and it needs a Threads connection with the
+// reply permission.
 func (s *InboxService) ListConversations(ctx context.Context, params *InboxListParams) (*CursorListResponse[InboxConversation], error) {
 	query := url.Values{}
 	if params != nil {
@@ -225,9 +238,45 @@ func (s *InboxService) MarkRead(ctx context.Context, conversationID string) (*In
 // re-enable X DMs in the dashboard to resume — DMs that arrived while
 // suspended are not recovered). Neither code is one of the SDK's typed error
 // subclasses, so match them with errors.As against *APIError and check Code.
+//
+// Threads replies publish as native Threads replies. Threads inbox is
+// currently rolling out; until Meta approves the permissions it is disabled
+// on production, and it needs a Threads connection with the reply permission:
+// a 401 *APIError with Code "reauth_required" means the connection lacks it
+// (reconnect Threads).
 func (s *InboxService) Reply(ctx context.Context, conversationID string, params *InboxReplyParams) (*ItemResponse[InboxMessage], error) {
 	var out ItemResponse[InboxMessage]
 	if err := s.client.post(ctx, "/inbox/conversations/"+url.PathEscape(conversationID)+"/reply", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// InboxHideParams is the request body for Inbox.Hide.
+type InboxHideParams struct {
+	// Hide hides the reply when true and unhides it when false.
+	Hide bool `json:"hide"`
+}
+
+// Hide calls `POST /inbox/messages/:messageId/hide`: hide or unhide a reply
+// someone left on one of your Threads posts, as the post owner (Threads only
+// for now). hide=true hides, hide=false unhides. Only incoming top-level
+// replies can be hidden (Threads does not allow hiding nested replies); the
+// message keeps its place in the conversation. Returns the message with
+// Hidden flipped. Requires the inbox:write scope. The id is URL-encoded for
+// you.
+//
+// Threads inbox is currently rolling out; until Meta approves the permissions
+// it is disabled on production and calls return a clear error. *APIError
+// codes: 400 "unsupported_platform" (not an incoming Threads reply, or
+// Threads inbox not available yet), 400 "not_hideable" (nested reply or
+// Threads refused), 401 "reauth_required" (the Threads connection lacks the
+// reply permission; reconnect Threads), 404 "not_found" (message not in this
+// workspace) or "account_not_connected" (no Threads account).
+func (s *InboxService) Hide(ctx context.Context, messageID string, hide bool) (*ItemResponse[InboxMessage], error) {
+	params := &InboxHideParams{Hide: hide}
+	var out ItemResponse[InboxMessage]
+	if err := s.client.post(ctx, "/inbox/messages/"+url.PathEscape(messageID)+"/hide", jsonBody(params), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

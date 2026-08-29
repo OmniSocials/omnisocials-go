@@ -194,6 +194,8 @@ _, err = client.Posts.Update(ctx, postID, &omnisocials.PostUpdateParams{
 })
 ```
 
+Threads posts can also carry a location tag: set `Threads.LocationID`, a Threads location id from `client.Locations.SearchThreads` (Instagram Place ids are not interchangeable). On a multi-part thread the tag lands on part 1; on update, set `LocationID: omnisocials.Null` to clear it. Threads location tagging is currently rolling out; until Meta approves the permissions it is disabled on production and calls return a clear error.
+
 ### X link posts use credits
 
 X bills API posts whose text contains a URL at a premium, and OmniSocials passes that fee through as prepaid credits (20 credits per URL-containing tweet; threads billed per part with a link). When a create targets X and the text contains a URL, the response's `Warnings` field carries a `PostWarning` with code `x_url_post_credits`:
@@ -440,7 +442,7 @@ best, err := client.Analytics.BestTimes(ctx, &omnisocials.BestTimesParams{
 })
 ```
 
-## Locations (Instagram place tagging)
+## Locations (Instagram and Threads location tagging)
 
 ```go
 results, err := client.Locations.Search(ctx, "Griffith Observatory")
@@ -454,6 +456,23 @@ if check.Valid {
 		MediaURLs:   []string{"https://example.com/observatory.jpg"},
 		LocationID:  place.ID,
 		ScheduledAt: "2026-08-01T18:30:00Z",
+	})
+}
+```
+
+Threads locations use their own ids (a Facebook Place id is not a Threads location id) and a different response shape: `Locations` on success, `Error` (`{code, message}`) when unavailable. Search by text, or by coordinates instead of `Q`, and pass a result's `ID` as `ThreadsPostOptions.LocationID`. Threads location tagging is currently rolling out; until Meta approves the permissions it is disabled on production and calls return a clear error.
+
+```go
+spots, err := client.Locations.SearchThreads(ctx, &omnisocials.ThreadsLocationSearchParams{Q: "Griffith Observatory"})
+// or around a point:
+// &omnisocials.ThreadsLocationSearchParams{Latitude: omnisocials.Float64(34.1184), Longitude: omnisocials.Float64(-118.3004)}
+
+if spots.Error == nil && len(spots.Locations) > 0 {
+	_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+		Content:   "Golden hour at the observatory",
+		Channels:  []string{"threads"},
+		MediaURLs: []string{"https://example.com/observatory.jpg"},
+		Threads:   &omnisocials.ThreadsPostOptions{LocationID: spots.Locations[0].ID},
 	})
 }
 ```
@@ -539,7 +558,7 @@ func main() {
 
 ## Inbox
 
-Social inbox conversations (DMs, comments, and mentions) across connected platforms: Instagram, Facebook, LinkedIn, TikTok (video comments only), YouTube (video comments only), and X (DMs). TikTok and YouTube replies are comments only; TikTok replies are capped at 150 characters.
+Social inbox conversations (DMs, comments, and mentions) across connected platforms: Instagram, Facebook, LinkedIn, TikTok (video comments only), YouTube (video comments only), X (DMs), and Threads (replies and mentions, no DMs). TikTok and YouTube replies are comments only; TikTok replies are capped at 150 characters. Threads inbox is currently rolling out; until Meta approves the permissions it is disabled on production, and it needs a Threads connection with the reply permission.
 
 ```go
 conversations, err := client.Inbox.ListConversations(ctx, &omnisocials.InboxListParams{
@@ -566,6 +585,10 @@ reply, err := client.Inbox.Reply(ctx, conversations.Data[0].ConversationID, &omn
 	Text: "Thanks for reaching out!",
 })
 fmt.Println(reply.Data.ID, reply.Data.Direction)
+
+// Threads only: hide a reply someone left on one of your posts
+// (false unhides; only top-level replies can be hidden)
+_, err = client.Inbox.Hide(ctx, thread.Data[0].ID, true)
 ```
 
 **X (Twitter) DM credits.** X DMs are supported once a workspace opts in (dashboard-only). Replying on an X conversation costs **2 prepaid credits** per send (X's per-request fee), debited before the send and auto-refunded if it fails. `Reply` returns two X-specific 402 codes, neither of which is one of the SDK's typed error subclasses — match them against the base `*APIError`:

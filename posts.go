@@ -177,8 +177,10 @@ type Post struct {
 	LinkDescription  string                  `json:"link_description,omitempty"`
 	LinkThumbnailURL string                  `json:"link_thumbnail_url,omitempty"`
 	// Per-platform options echoed back in the request shape (X, Bluesky,
-	// Mastodon, and Threads include thread_parts; comment-capable platforms
-	// include first_comment / first_comment_result).
+	// Mastodon, and Threads include thread_parts; Threads includes a
+	// "location" object {id, name, address, city, country} when a location
+	// tag is set; comment-capable platforms include first_comment /
+	// first_comment_result).
 	Pinterest      map[string]any `json:"pinterest,omitempty"`
 	YouTube        map[string]any `json:"youtube,omitempty"`
 	Instagram      map[string]any `json:"instagram,omitempty"`

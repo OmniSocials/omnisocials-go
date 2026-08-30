@@ -152,7 +152,7 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 
 ### Chained threads (X, Bluesky, Mastodon, Threads)
 
-Provide 2 to 25 `ThreadParts` to publish a chained thread instead of a single tweet. Each part is capped at 280 characters and can carry its own media. The same `ThreadPart` shape works for `Bluesky` (300 chars per part), `Mastodon` (500 chars per part) and `Threads` (Meta Threads: 2 to 25 parts, 500 characters per part, up to 10 media per part; parts after the first publish as replies to the previous part, and the Threads caption is taken from part 1).
+Provide 2 to 25 `ThreadParts` to publish a chained thread instead of a single tweet. Each part is capped at 280 characters (25,000 for X Premium/Premium+ accounts) and can carry its own media. The same `ThreadPart` shape works for `Bluesky` (300 chars per part), `Mastodon` (500 chars per part) and `Threads` (Meta Threads: 2 to 25 parts, 500 characters per part, up to 10 media per part; parts after the first publish as replies to the previous part, and the Threads caption is taken from part 1).
 
 ```go
 _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{

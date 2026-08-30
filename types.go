@@ -106,11 +106,11 @@ type MediaIDEntry struct {
 
 // ---- Thread parts (X / Bluesky / Mastodon / Threads) -------------------------
 
-// ThreadPart is one segment of a thread on X (max 280 chars), Bluesky
-// (max 300 graphemes), Mastodon (max 500 chars by default), or Threads
-// (max 500 chars). Each part can carry up to 4 media items (MediaIDs +
-// MediaURLs combined); Threads allows up to 10 per part, images and videos
-// mixed.
+// ThreadPart is one segment of a thread on X (max 280 chars, 25,000 for
+// Premium/Premium+ accounts), Bluesky (max 300 graphemes), Mastodon (max 500
+// chars by default), or Threads (max 500 chars). Each part can carry up to 4
+// media items (MediaIDs + MediaURLs combined); Threads allows up to 10 per
+// part, images and videos mixed.
 type ThreadPart struct {
 	// Text is the part's text.
 	Text string `json:"text"`

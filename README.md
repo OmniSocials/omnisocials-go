@@ -241,6 +241,15 @@ _, err = client.Posts.Retry(ctx, one.Data.ID)   // retry only the failed platfor
 err = client.Posts.Delete(ctx, one.Data.ID)     // 204 on success
 ```
 
+### Approve or reject a post
+
+```go
+_, err = client.Posts.Approve(ctx, one.Data.ID)                                              // approve the current approval-workflow step
+_, err = client.Posts.Reject(ctx, one.Data.ID, &omnisocials.PostRejectParams{Comment: "Wrong CTA link, please fix."}) // reject and stop the workflow (comment optional, pass nil for none)
+```
+
+Only works on a post with `ApprovalStatus: "pending"` (`Status: "in_approval"`). Both act on behalf of the user who owns the API key, who must be a listed approver for the workflow's CURRENT step — steps approve in order, so being an approver on a later step is not enough yet (returns a 403 `forbidden` error). Approving the last step finalizes the post (`scheduled` or `posting`); rejecting stops the whole workflow immediately, not just the current step.
+
 `Retry` re-publishes only the platforms that failed, on the same post; platforms that already succeeded are never posted again. It is asynchronous: a 200 means the retry is queued, so poll `Get` for the outcome. Max 3 retries per platform.
 
 ### Recent platform posts

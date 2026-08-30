@@ -100,10 +100,22 @@ type InboxMessage struct {
 	Hidden *bool `json:"hidden,omitempty"`
 	// Permalink is a link to the reply or mentioning post on the platform,
 	// when known.
-	Permalink *string          `json:"permalink,omitempty"`
-	Sender    InboxParticipant `json:"sender"`
+	Permalink *string `json:"permalink,omitempty"`
+	// Attachment is media on this message, when present. Incoming
+	// Instagram/Facebook DM images, videos, voice messages, and story
+	// mentions are re-hosted on our CDN so the URL stays valid indefinitely.
+	// nil when the message has no media.
+	Attachment *InboxAttachment `json:"attachment,omitempty"`
+	Sender     InboxParticipant `json:"sender"`
 	// Post is the related post for comment/mention messages; nil for DMs.
 	Post *InboxPostRef `json:"post,omitempty"`
+}
+
+// InboxAttachment is media sent with an inbox message.
+type InboxAttachment struct {
+	URL string `json:"url"`
+	// Type is "image", "video", "audio", or "file".
+	Type string `json:"type"`
 }
 
 // InboxMarkReadResponse is the Inbox.MarkRead response. Note: unlike the item
@@ -145,9 +157,11 @@ type InboxMessagesParams struct {
 
 // InboxReplyParams is the request body for Inbox.Reply.
 type InboxReplyParams struct {
-	// Text is the reply text (required).
+	// Text is the reply text. Optional when AttachmentURL is set — an
+	// attachment-only reply is allowed.
 	Text string `json:"text"`
-	// AttachmentURL is the public URL of a single media asset to attach.
+	// AttachmentURL is the public URL of a single media asset to attach
+	// (Facebook and Instagram DMs only; other platforms are text-only).
 	AttachmentURL string `json:"attachment_url,omitempty"`
 	// AttachmentType is the attachment kind: "image", "video", "audio", or
 	// "file". Pair it with AttachmentURL.

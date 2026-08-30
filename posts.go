@@ -223,6 +223,34 @@ type PostRetryResult struct {
 	Message string `json:"message"`
 }
 
+// PostApproveResult is the data payload of Posts.Approve.
+type PostApproveResult struct {
+	ID string `json:"id"`
+	// Status is the post's status after this call: "in_approval" (more
+	// steps remain), "scheduled", or "posting".
+	Status string `json:"status"`
+	// ApprovalStatus is "pending" or "approved".
+	ApprovalStatus string `json:"approval_status"`
+	Message        string `json:"message,omitempty"`
+}
+
+// PostRejectResult is the data payload of Posts.Reject.
+type PostRejectResult struct {
+	ID string `json:"id"`
+	// Status is always "rejected".
+	Status string `json:"status"`
+	// ApprovalStatus is always "rejected".
+	ApprovalStatus string `json:"approval_status"`
+	Message        string `json:"message,omitempty"`
+}
+
+// PostRejectParams is the optional request body for Posts.Reject.
+type PostRejectParams struct {
+	// Comment is shown to the requester and other approvers in the post's
+	// review thread. Optional.
+	Comment string `json:"comment,omitempty"`
+}
+
 // RecentPlatformPostsResponse is the Posts.RecentPlatform response: recent
 // posts fetched live from the connected platform APIs.
 type RecentPlatformPostsResponse struct {
@@ -361,6 +389,36 @@ func (s *PostsService) Publish(ctx context.Context, id string) (*ItemResponse[Po
 func (s *PostsService) Retry(ctx context.Context, id string) (*ItemResponse[PostRetryResult], error) {
 	var out ItemResponse[PostRetryResult]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/retry", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Approve calls `POST /posts/:id/approve`: approve the current step of a
+// post's approval workflow, on behalf of the user who owns this API key.
+// That user must be a listed approver for the workflow's CURRENT step -
+// steps approve in order, so an approver on a later step gets a 403
+// "forbidden" error until earlier steps clear. Only works on a post with
+// ApprovalStatus "pending". If this is the last step, the post finalizes
+// immediately ("scheduled" or "posting"); otherwise it stays "in_approval"
+// and the next step's approvers are notified.
+func (s *PostsService) Approve(ctx context.Context, id string) (*ItemResponse[PostApproveResult], error) {
+	var out ItemResponse[PostApproveResult]
+	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/approve", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Reject calls `POST /posts/:id/reject`: reject a post's approval workflow,
+// on behalf of the user who owns this API key. Same approver requirement as
+// Approve. Unlike approval, a rejection stops the WHOLE workflow immediately
+// (not just the current step) - the post's status becomes "rejected".
+// params may be nil (no comment) or carry an optional Comment shown to the
+// requester and other approvers.
+func (s *PostsService) Reject(ctx context.Context, id string, params *PostRejectParams) (*ItemResponse[PostRejectResult], error) {
+	var out ItemResponse[PostRejectResult]
+	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/reject", jsonBody(params), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

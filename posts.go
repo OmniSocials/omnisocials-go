@@ -55,6 +55,13 @@ type PostCreateParams struct {
 	HashtagPlacement string `json:"hashtag_placement,omitempty"`
 	// HashtagPlatforms restricts the hashtags to a subset of Channels.
 	HashtagPlatforms []string `json:"hashtag_platforms,omitempty"`
+	// ApprovalWorkflowID routes the post through a saved approval workflow
+	// (see ApprovalWorkflows.List). The post is created as "in_approval"
+	// (approval_status "pending") instead of "scheduled"; its approvers are
+	// notified and it publishes at ScheduledAt once the last step approves
+	// (dashboard, or Posts.Approve). Requires ScheduledAt; not allowed with
+	// PublishNow. Errors: 404 workflow_not_found, 400 validation_error.
+	ApprovalWorkflowID string `json:"approval_workflow_id,omitempty"`
 	// Per-platform options.
 	Pinterest      map[string]any       `json:"pinterest,omitempty"`
 	YouTube        map[string]any       `json:"youtube,omitempty"`

@@ -68,6 +68,9 @@ type Client struct {
 	// HashtagSets covers /hashtag-sets: saved hashtag groups applied to
 	// posts at create time.
 	HashtagSets *HashtagSetsService
+	// ApprovalWorkflows covers /approval-workflows: the dashboard-configured
+	// approval workflows a post can be routed through at create time.
+	ApprovalWorkflows *ApprovalWorkflowsService
 	// Accounts covers /accounts: the workspace's connected social accounts.
 	Accounts *AccountsService
 	// Analytics covers /analytics: post stats (single + batch), overview,
@@ -160,6 +163,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Media = &MediaService{client: c}
 	c.Folders = &FoldersService{client: c}
 	c.HashtagSets = &HashtagSetsService{client: c}
+	c.ApprovalWorkflows = &ApprovalWorkflowsService{client: c}
 	c.Accounts = &AccountsService{client: c}
 	c.Analytics = &AnalyticsService{client: c}
 	c.Locations = &LocationsService{client: c}

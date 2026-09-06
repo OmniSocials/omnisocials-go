@@ -595,9 +595,35 @@ reply, err := client.Inbox.Reply(ctx, conversations.Data[0].ConversationID, &omn
 })
 fmt.Println(reply.Data.ID, reply.Data.Direction)
 
-// Threads only: hide a reply someone left on one of your posts
-// (false unhides; only top-level replies can be hidden)
+// Hide a comment someone left on one of your posts (Facebook, Instagram,
+// TikTok, YouTube, Threads). false unhides.
 _, err = client.Inbox.Hide(ctx, thread.Data[0].ID, true)
+
+// Delete a comment outright (Facebook, Instagram, TikTok; YouTube: hide instead).
+// Replies under it go with it; their ids come back as RemovedReplyIDs.
+deleted, err := client.Inbox.DeleteMessage(ctx, thread.Data[0].ID)
+fmt.Println(deleted.Data.RemovedReplyIDs)
+```
+
+**Work queue: what needs an answer.** `Inbox.Next` hands out the next conversation that still needs a reply (the customer's latest DM with no reply after it, or an unreplied comment/mention that is not hidden), with the whole thread and the post it belongs to (`Post.URL`, `Post.MediaType`), so a reply can be drafted from one call. Replies typed in the native apps count as answers. Only unread items are served by default, so `MarkRead` is the durable way to skip one; `Exclude` skips conversation ids for the current session only. Set `IncludeNext` on `Reply` to get the following item in the same response. `InboxListParams{Unanswered: omnisocials.Bool(true)}` gives the same set as a plain list.
+
+```go
+next, err := client.Inbox.Next(ctx, &omnisocials.InboxNextParams{Platform: "instagram"})
+for err == nil && next.Data != nil {
+	fmt.Printf("%d left. %s: %s\n", next.Remaining, next.Data.Message.Sender.Username, next.Data.Message.Text)
+
+	var reply *omnisocials.InboxReplyResponse
+	reply, err = client.Inbox.Reply(ctx, next.Data.Message.ConversationID, &omnisocials.InboxReplyParams{
+		Text:        "Thanks! DM sent.",
+		IncludeNext: true,
+	})
+	if err == nil {
+		next = &omnisocials.InboxNextResponse{Data: reply.Next}
+		if reply.Remaining != nil {
+			next.Remaining = *reply.Remaining
+		}
+	}
+}
 ```
 
 **X (Twitter) DM credits.** X DMs are supported once a workspace opts in (dashboard-only). Replying on an X conversation costs **2 prepaid credits** per send (X's per-request fee), debited before the send and auto-refunded if it fails. `Reply` returns two X-specific 402 codes, neither of which is one of the SDK's typed error subclasses — match them against the base `*APIError`:

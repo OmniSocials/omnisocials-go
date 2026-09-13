@@ -371,7 +371,7 @@ func (s *PostsService) Update(ctx context.Context, id string, params *PostUpdate
 	return &out, nil
 }
 
-// Delete calls `DELETE /posts/:id`: delete a post (204 on success).
+// Delete calls `DELETE /posts/:id`: remove a post from OmniSocials (204 on success). The live post stays on the platform.
 func (s *PostsService) Delete(ctx context.Context, id string) error {
 	return s.client.del(ctx, "/posts/"+url.PathEscape(id))
 }

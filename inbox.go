@@ -215,9 +215,8 @@ type InboxReplyResponse struct {
 // Threads conversations are Type "comment" (replies people leave on your
 // Threads posts; ConversationID looks like `threads_comment_<rootPostId>`)
 // and "mention" (`threads_mention_<postId>`); there are no Threads DMs.
-// Threads inbox is currently rolling out; until Meta approves the permissions
-// it is disabled on production, and it needs a Threads connection with the
-// reply permission.
+// The Threads inbox needs a Threads connection with the reply permissions;
+// connections made before those permissions existed must be reconnected once.
 func (s *InboxService) ListConversations(ctx context.Context, params *InboxListParams) (*CursorListResponse[InboxConversation], error) {
 	query := url.Values{}
 	if params != nil {
@@ -294,11 +293,10 @@ func (s *InboxService) MarkRead(ctx context.Context, conversationID string) (*In
 // suspended are not recovered). Neither code is one of the SDK's typed error
 // subclasses, so match them with errors.As against *APIError and check Code.
 //
-// Threads replies publish as native Threads replies. Threads inbox is
-// currently rolling out; until Meta approves the permissions it is disabled
-// on production, and it needs a Threads connection with the reply permission:
-// a 401 *APIError with Code "reauth_required" means the connection lacks it
-// (reconnect Threads).
+// Threads replies publish as native Threads replies. The Threads inbox needs
+// a Threads connection with the reply permission: a 401 *APIError with Code
+// "reauth_required" means the connection lacks it (connected before it
+// existed; reconnect Threads).
 //
 // Set IncludeNext to also get Next (the next conversation that needs an
 // answer, the same object Next returns in Data, using its default queue order
@@ -339,9 +337,9 @@ type InboxHideParams struct {
 // reconnect it in the dashboard), 404 "not_found" (message not in this
 // workspace) or "account_not_connected", 429 "quota_exceeded" (YouTube's
 // daily API quota is used up; retry after midnight Pacific), 502
-// "platform_error" (the platform rejected the call). Threads inbox is
-// currently rolling out; until Meta approves the permissions it is disabled
-// on production and Threads calls return a clear error.
+// "platform_error" (the platform rejected the call). The Threads inbox needs
+// a Threads connection with the reply permissions; a connection made before
+// those permissions existed answers 401 "reauth_required" until reconnected.
 func (s *InboxService) Hide(ctx context.Context, messageID string, hide bool) (*ItemResponse[InboxMessage], error) {
 	params := &InboxHideParams{Hide: hide}
 	var out ItemResponse[InboxMessage]

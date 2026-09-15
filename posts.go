@@ -62,6 +62,12 @@ type PostCreateParams struct {
 	// (dashboard, or Posts.Approve). Requires ScheduledAt; not allowed with
 	// PublishNow. Errors: 404 workflow_not_found, 400 validation_error.
 	ApprovalWorkflowID string `json:"approval_workflow_id,omitempty"`
+	// VideoCover is the video thumbnail for a post whose media is one
+	// video: {"type": "frame", "thumb_offset": 3000} or {"type": "custom",
+	// "cover_url": "..."}, plus optional per-platform "overrides" keyed by
+	// platform id. Applied on Instagram, Facebook, LinkedIn, TikTok (frame
+	// only), Pinterest and YouTube Shorts.
+	VideoCover map[string]any `json:"video_cover,omitempty"`
 	// Per-platform options.
 	Pinterest      map[string]any       `json:"pinterest,omitempty"`
 	YouTube        map[string]any       `json:"youtube,omitempty"`
@@ -96,6 +102,9 @@ type PostUpdateParams struct {
 	LocationID    string         `json:"location_id,omitempty"`
 	Collaborators []string       `json:"collaborators,omitempty"`
 	UserTags      []UserTag      `json:"user_tags,omitempty"`
+	// VideoCover replaces the stored video cover wholesale (same shape as
+	// PostCreateParams.VideoCover).
+	VideoCover    map[string]any `json:"video_cover,omitempty"`
 	Pinterest     map[string]any `json:"pinterest,omitempty"`
 	YouTube       map[string]any `json:"youtube,omitempty"`
 	Instagram     map[string]any `json:"instagram,omitempty"`
@@ -183,6 +192,9 @@ type Post struct {
 	LinkTitle        string                  `json:"link_title,omitempty"`
 	LinkDescription  string                  `json:"link_description,omitempty"`
 	LinkThumbnailURL string                  `json:"link_thumbnail_url,omitempty"`
+	// VideoCover is the stored video thumbnail (type, thumb_offset,
+	// cover_url, overrides); nil when none was chosen.
+	VideoCover map[string]any `json:"video_cover,omitempty"`
 	// Per-platform options echoed back in the request shape (X, Bluesky,
 	// Mastodon, and Threads include thread_parts; Threads includes a
 	// "location" object {id, name, address, city, country} when a location

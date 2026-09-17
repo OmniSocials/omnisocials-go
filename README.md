@@ -6,7 +6,7 @@ The official Go client for the [OmniSocials API](https://docs.omnisocials.com). 
 - Context-first methods and typed request/response structs
 - Automatic retries with exponential backoff, configurable timeouts
 - Rich error types matched with `errors.As`, plus a webhook signature verification helper
-- Go 1.21+
+- Go 1.26+
 
 ## Installation
 

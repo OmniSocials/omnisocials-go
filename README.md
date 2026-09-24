@@ -605,16 +605,26 @@ deleted, err := client.Inbox.DeleteMessage(ctx, thread.Data[0].ID)
 fmt.Println(deleted.Data.RemovedReplyIDs)
 ```
 
-**Work queue: what needs an answer.** `Inbox.Next` hands out the next conversation that still needs a reply (the customer's latest DM with no reply after it, or an unreplied comment/mention that is not hidden), with the whole thread and the post it belongs to (`Post.URL`, `Post.MediaType`), so a reply can be drafted from one call. Replies typed in the native apps count as answers. Only unread items are served by default, so `MarkRead` is the durable way to skip one; `Exclude` skips conversation ids for the current session only. Set `IncludeNext` on `Reply` to get the following item in the same response. `InboxListParams{Unanswered: omnisocials.Bool(true)}` gives the same set as a plain list.
+**Work queue: what needs an answer.** `Inbox.Next` hands out the next conversation that still needs a reply (the customer's latest DM with no reply after it, or an unreplied comment/mention that is not hidden), with the whole thread and the post it belongs to (`Post.URL`, `Post.MediaType`), so a reply can be drafted from one call. DMs that can still be answered come first, then Instagram/Facebook DMs whose 24-hour window has closed (`ReplyWindow.Open` is false: answer those from the native app or mark them read), then comments and mentions, oldest first. Replies typed in the native apps count as answers. Only unread items are served by default, so `MarkRead` is the durable way to skip one; `Exclude` skips conversation ids for the current session only. Always set `MessageID` to `Data.Message.ID` on `Reply` for comment threads: every comment on a post shares one conversation, and without it the reply goes under the newest comment on the post. Set `IncludeNext` on `Reply` to get the following item in the same response. `InboxListParams{Unanswered: omnisocials.Bool(true)}` gives the same set as a plain list.
 
 ```go
 next, err := client.Inbox.Next(ctx, &omnisocials.InboxNextParams{Platform: "instagram"})
 for err == nil && next.Data != nil {
 	fmt.Printf("%d left. %s: %s\n", next.Remaining, next.Data.Message.Sender.Username, next.Data.Message.Text)
 
+	if !next.Data.ReplyWindow.Open {
+		// An Instagram/Facebook DM past Meta's 24-hour window: Reply would
+		// answer 422 outside_messaging_window. Answer it in the app, or skip it.
+		if _, err = client.Inbox.MarkRead(ctx, next.Data.Message.ConversationID); err == nil {
+			next, err = client.Inbox.Next(ctx, &omnisocials.InboxNextParams{Platform: "instagram"})
+		}
+		continue
+	}
+
 	var reply *omnisocials.InboxReplyResponse
 	reply, err = client.Inbox.Reply(ctx, next.Data.Message.ConversationID, &omnisocials.InboxReplyParams{
 		Text:        "Thanks! DM sent.",
+		MessageID:   next.Data.Message.ID, // the comment being answered, not the newest one
 		IncludeNext: true,
 	})
 	if err == nil {

@@ -150,10 +150,12 @@ type InboxListParams struct {
 	Unread *bool
 	// Unanswered, when omnisocials.Bool(true), returns only conversations that
 	// still need an answer: the customer's latest DM has no reply after it
-	// (Instagram/Facebook DMs within the 24-hour messaging window only), or a
-	// comment/mention that has not been replied to and is not hidden. Replies
-	// typed in the native apps count as answers (they are mirrored into the
-	// inbox). Read state is ignored here; use Next for a work queue.
+	// (Instagram/Facebook DMs past Meta's 24-hour messaging window included:
+	// they cannot be answered through the API, but the customer is still
+	// waiting), or a comment/mention that has not been replied to and is not
+	// hidden. Replies typed in the native apps count as answers (they are
+	// mirrored into the inbox). Read state is ignored here; use Next for a
+	// work queue.
 	Unanswered *bool
 	// Limit is the max items to return (1-100).
 	Limit int
@@ -183,6 +185,15 @@ type InboxReplyParams struct {
 	// AttachmentType is the attachment kind: "image", "video", "audio", or
 	// "file". Pair it with AttachmentURL.
 	AttachmentType string `json:"attachment_type,omitempty"`
+	// MessageID, on comment and mention threads, is the inbox id of the
+	// specific incoming comment being answered (InboxNextUnanswered.Message.ID
+	// from Next, or a message ID from GetMessages). Every comment on a post
+	// shares one conversation, so without it the reply is posted under the
+	// newest comment on the post, which may be a different person than the
+	// one you drafted for. Always set it when replying to an item served by
+	// the queue. Ignored for DMs (a DM reply goes to the conversation). 404
+	// "not_found" when it is not an incoming message of this conversation.
+	MessageID string `json:"message_id,omitempty"`
 	// IncludeNext, when true, makes the response also carry Next (the next
 	// conversation that needs an answer, the same object Next returns in
 	// Data, using its default queue order and filters; nil when nothing is
@@ -298,6 +309,20 @@ func (s *InboxService) MarkRead(ctx context.Context, conversationID string) (*In
 // "reauth_required" means the connection lacks it (connected before it
 // existed; reconnect Threads).
 //
+// On comment and mention threads, set MessageID (the ID of the comment being
+// answered: InboxNextUnanswered.Message.ID from Next, or a message ID from
+// GetMessages). Every comment on a post shares one conversation, so without
+// it the reply is posted under the newest comment on the post, which may be a
+// different person than the one you drafted for. Ignored for DMs. 404
+// "not_found" when it is not an incoming message of this conversation.
+//
+// Instagram and Facebook DMs can only be answered within 24 hours of the
+// customer's last message (Meta policy). That is checked before the send: a
+// closed window returns a 422 *APIError with Code "outside_messaging_window"
+// and nothing is sent (Next reports the same in ReplyWindow). Answer such a
+// DM from the Instagram or Facebook app (mirrored into the inbox) or mark the
+// conversation read; do not retry.
+//
 // Set IncludeNext to also get Next (the next conversation that needs an
 // answer, the same object Next returns in Data, using its default queue order
 // and filters; nil when nothing is waiting) and Remaining in the response.
@@ -337,9 +362,15 @@ type InboxHideParams struct {
 // reconnect it in the dashboard), 404 "not_found" (message not in this
 // workspace) or "account_not_connected", 429 "quota_exceeded" (YouTube's
 // daily API quota is used up; retry after midnight Pacific), 502
-// "platform_error" (the platform rejected the call). The Threads inbox needs
-// a Threads connection with the reply permissions; a connection made before
-// those permissions existed answers 401 "reauth_required" until reconnected.
+// "platform_error" (the platform rejected the call), 502 "hide_not_applied"
+// (Instagram accepted the call but, read back, still reports the comment in
+// its old state; this happens with comments Instagram shows under "Comments
+// from Facebook" on a reel that is also shared to Facebook, which live on
+// Facebook where Instagram's hide does not reach them; the inbox row is left
+// unchanged, so hide it in the Instagram or Facebook app and do not retry).
+// The Threads inbox needs a Threads connection with the reply permissions; a
+// connection made before those permissions existed answers 401
+// "reauth_required" until reconnected.
 func (s *InboxService) Hide(ctx context.Context, messageID string, hide bool) (*ItemResponse[InboxMessage], error) {
 	params := &InboxHideParams{Hide: hide}
 	var out ItemResponse[InboxMessage]
@@ -402,17 +433,37 @@ type InboxNextParams struct {
 	Exclude []string
 }
 
+// InboxReplyWindow says whether Reply can still answer an item. Only
+// Instagram and Facebook DMs have a window (Meta: 24 hours after the
+// customer's last message); every other item has Open true and ClosesAt nil.
+type InboxReplyWindow struct {
+	// Open is false when the item is an Instagram/Facebook DM whose 24-hour
+	// window has closed. It is still served (the customer is still waiting),
+	// but Reply answers 422 "outside_messaging_window": answer it from the
+	// Instagram or Facebook app (that reply is mirrored into the inbox and
+	// clears the item) or mark the conversation read to skip it.
+	Open bool `json:"open"`
+	// ClosesAt is when the window closes or closed (the customer's last
+	// message + 24 h); nil when there is no window.
+	ClosesAt *string `json:"closes_at"`
+}
+
 // InboxNextUnanswered is the next conversation that needs an answer, with
 // everything needed to draft the reply.
 type InboxNextUnanswered struct {
 	Conversation InboxConversation `json:"conversation"`
 	// Message is the unanswered incoming message itself: the customer's
 	// latest DM, or the specific comment. Its ID is what Hide and
-	// DeleteMessage take; its ConversationID is what Reply takes.
+	// DeleteMessage take, and the MessageID to set on Reply for comment
+	// threads (so the reply lands under this comment, not under the newest
+	// one on the post); its ConversationID is what Reply takes.
 	Message InboxMessage `json:"message"`
 	// Messages is the conversation so far, oldest first (the most recent 50
 	// messages for long DM threads).
 	Messages []InboxMessage `json:"messages"`
+	// ReplyWindow says whether Reply can still answer this item; see
+	// InboxReplyWindow.
+	ReplyWindow InboxReplyWindow `json:"reply_window"`
 }
 
 // InboxNextResponse is the Inbox.Next response.
@@ -425,26 +476,33 @@ type InboxNextResponse struct {
 }
 
 // Next calls `GET /inbox/next`: the next conversation that needs an answer,
-// a work queue for answering the inbox. Returns the oldest (by default) item
-// that still needs a reply, together with its conversation so far and the
-// post it belongs to, so a reply can be drafted from one call. An item needs
-// an answer when it is the customer's latest DM with no reply after it
-// (Instagram/Facebook DMs within the 24-hour messaging window only, since
-// Meta refuses replies outside it), or a comment/mention that has not been
-// replied to and is not hidden. Replies typed in the native apps count as
-// answers (they are mirrored into the inbox), so a thread a colleague
-// answered on their phone is not served again. Instagram mentions are skipped
-// (no reply path). Looks at the last 30 days of activity. Requires the
-// inbox:read scope.
+// a work queue for answering the inbox. Returns one item that still needs a
+// reply, together with its conversation so far and the post it belongs to,
+// so a reply can be drafted from one call. An item needs an answer when it
+// is the customer's latest DM with no reply after it, or a comment/mention
+// that has not been replied to and is not hidden. Order: DMs that can still
+// be answered come first (Instagram/Facebook DMs inside Meta's 24-hour
+// window, the one whose window closes soonest first, and X DMs), then
+// Instagram/Facebook DMs whose window has closed (served with
+// ReplyWindow.Open false: answer them from the native app or mark them
+// read), then comments and mentions, oldest first by default; Order
+// "newest" reverses the order within each group. Replies typed in the native
+// apps count as answers (they are mirrored into the inbox), so a thread a
+// colleague answered on their phone is not served again. Instagram mentions
+// are skipped (no reply path). Looks at the last 30 days of activity.
+// Requires the inbox:read scope.
 //
 // Only unread items are served by default: marking a conversation read
 // (MarkRead) is how to skip one for good; set IncludeRead to include
 // read-but-unanswered items. Exclude is a session-local skip. Data is nil
-// when nothing is waiting; Remaining counts the unanswered items still waiting
-// after this one (capped at 500). To chain the queue, set
-// InboxReplyParams.IncludeNext on Reply and it returns the next item in the
-// same response. *APIError codes: 400 "validation_error" (unknown platform,
-// type or order).
+// when nothing is waiting; Data.Message.ID is the MessageID to set on Reply
+// for comment threads; Data.ReplyWindow says whether Reply can still answer
+// the item (Open is false only for an Instagram/Facebook DM past its 24-hour
+// window, which Reply refuses with 422 "outside_messaging_window").
+// Remaining counts the unanswered items still waiting after this one (capped
+// at 500). To chain the queue, set InboxReplyParams.IncludeNext on Reply and
+// it returns the next item in the same response. *APIError codes: 400
+// "validation_error" (unknown platform, type or order).
 func (s *InboxService) Next(ctx context.Context, params *InboxNextParams) (*InboxNextResponse, error) {
 	query := url.Values{}
 	if params != nil {

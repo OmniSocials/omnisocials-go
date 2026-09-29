@@ -310,7 +310,7 @@ _, err = client.Media.UploadFromBase64(ctx, &omnisocials.MediaUploadFromBase64Pa
 
 ### PDF carousels
 
-Uploading a PDF rasterizes it into one image slide per page (max 20). The response carries `Slides` and `MediaIDs` alongside `Data` (the first slide). Pass ALL of `MediaIDs`, in order, to `Posts.Create` to post the deck as a carousel (a native swipeable document on LinkedIn, an image carousel elsewhere).
+Uploading a PDF rasterizes it into one image slide per page (max 20). The response carries `Slides` and `MediaIDs` alongside `Data` (the first slide). Pass ALL of `MediaIDs`, in order, to `Posts.Create` to post the deck as a carousel (on LinkedIn a native swipeable document made from the original PDF file, which is kept so text and links stay intact; an image carousel elsewhere). To keep the PDF as ONE library item instead of one item per page, pass `pdf_mode` = `"document"`: the response then has a single `data` item of type `document` (its page images in `pdf.pages`) and `media_ids` holds that one id, which expands into every page at post time.
 
 ```go
 pdf, err := client.Media.UploadFromURL(ctx, &omnisocials.MediaUploadFromURLParams{URL: "https://example.com/deck.pdf"})

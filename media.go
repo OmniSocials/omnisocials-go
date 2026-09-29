@@ -22,7 +22,7 @@ type MediaItem struct {
 	ID           string  `json:"id"`
 	URL          string  `json:"url"`
 	ThumbnailURL *string `json:"thumbnail_url,omitempty"`
-	// Type is "image" or "video".
+	// Type is "image", "video" or "document" (a PDF kept as one item).
 	Type string `json:"type"`
 	// Name is the human-readable label (falls back to the filename).
 	Name     *string `json:"name,omitempty"`
@@ -36,20 +36,54 @@ type MediaItem struct {
 	// "failed" when the source could not be fetched/validated.
 	Status    string `json:"status,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
+	// PDF is set on a slide rendered from a PDF upload (the kept original
+	// file and the page this slide renders); nil for every other item.
+	PDF *MediaSourcePDF `json:"pdf,omitempty"`
 }
 
-// PDFInfo describes a rasterized PDF upload.
+// PDFInfo describes a rasterized PDF upload. ID, Name, URL and SizeBytes
+// describe the kept original file, which LinkedIn receives when the slides
+// are posted unchanged (see document_source on the LinkedIn options).
 type PDFInfo struct {
+	TotalPages    int    `json:"total_pages"`
+	RenderedPages int    `json:"rendered_pages"`
+	Truncated     bool   `json:"truncated"`
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	URL           string `json:"url,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+}
+
+// MediaSourcePDF is set on a PDF document item (Type "document": the kept
+// file plus its rendered Pages) and on a slide rendered from a PDF (Type
+// "image": which file and Page it came from).
+type MediaSourcePDF struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Page is set on slides only: the 1-based page this image renders.
+	Page          int  `json:"page,omitempty"`
 	TotalPages    int  `json:"total_pages"`
 	RenderedPages int  `json:"rendered_pages"`
-	Truncated     bool `json:"truncated"`
+	Truncated     bool `json:"truncated,omitempty"`
+	// Pages is set on document items only: the rendered page images, in order.
+	Pages []MediaPDFPage `json:"pages,omitempty"`
+}
+
+// MediaPDFPage is one rendered page image of a PDF document item.
+type MediaPDFPage struct {
+	URL    string `json:"url"`
+	Width  *int   `json:"width,omitempty"`
+	Height *int   `json:"height,omitempty"`
 }
 
 // MediaUploadResponse is the envelope returned by the upload endpoints. A PDF
-// is rasterized into one image slide per page (max 20): Data mirrors the
-// first slide (back-compat) while Slides + MediaIDs carry the whole carousel
-// in page order. Pass ALL of MediaIDs to Posts.Create; on LinkedIn the slides
-// post as a native swipeable document, elsewhere as an image carousel.
+// is rasterized into one image slide per page (max 20) and the original file
+// is kept: Data mirrors the first slide (back-compat) while Slides + MediaIDs
+// carry the whole carousel in page order. Pass ALL of MediaIDs to
+// Posts.Create; on LinkedIn the slides post as a native swipeable document
+// made from the original PDF (unless the post's linkedin document_source is
+// "slides"), elsewhere as an image carousel.
 type MediaUploadResponse struct {
 	Data MediaItem `json:"data"`
 	// Compatibility lists connected platforms that would reject this file,
@@ -88,6 +122,10 @@ type MediaUploadParams struct {
 	Folder string
 	// FolderID is the id of an existing folder to file the asset under.
 	FolderID string
+	// PdfMode applies to PDF uploads only: "slides" (default) creates one
+	// image item per page, one id each; "document" keeps ONE item of type
+	// "document" whose single id in MediaIDs expands into every page.
+	PdfMode string
 }
 
 // MediaUploadFromURLParams is the request body for Media.UploadFromURL.
@@ -104,6 +142,9 @@ type MediaUploadFromURLParams struct {
 	Folder string `json:"folder,omitempty"`
 	// FolderID is the id of an existing folder to file the asset under.
 	FolderID string `json:"folder_id,omitempty"`
+	// PdfMode applies to PDF uploads only: "slides" (default) or "document"
+	// (one item whose single id expands into every page).
+	PdfMode string `json:"pdf_mode,omitempty"`
 }
 
 // MediaUploadFromBase64Params is the request body for Media.UploadFromBase64.
@@ -116,6 +157,8 @@ type MediaUploadFromBase64Params struct {
 	Name     string `json:"name,omitempty"`
 	Folder   string `json:"folder,omitempty"`
 	FolderID string `json:"folder_id,omitempty"`
+	// PdfMode applies to PDF uploads only: "slides" (default) or "document".
+	PdfMode string `json:"pdf_mode,omitempty"`
 }
 
 // CreateUploadURLResponse is the Media.CreateUploadURL response: a one-time
@@ -214,6 +257,11 @@ func (s *MediaService) Upload(ctx context.Context, params *MediaUploadParams) (*
 	}
 	if params.Name != "" {
 		if err := writer.WriteField("name", params.Name); err != nil {
+			return nil, &ConnectionError{Message: "failed to build multipart body: " + err.Error(), Err: err}
+		}
+	}
+	if params.PdfMode != "" {
+		if err := writer.WriteField("pdf_mode", params.PdfMode); err != nil {
 			return nil, &ConnectionError{Message: "failed to build multipart body: " + err.Error(), Err: err}
 		}
 	}

@@ -66,7 +66,8 @@ type PostCreateParams struct {
 	// video: {"type": "frame", "thumb_offset": 3000} or {"type": "custom",
 	// "cover_url": "..."}, plus optional per-platform "overrides" keyed by
 	// platform id. Applied on Instagram, Facebook, LinkedIn, TikTok (frame
-	// only), Pinterest and YouTube Shorts.
+	// only) and Pinterest. On YouTube Shorts the cover is stored as the
+	// default thumbnail, but YouTube shows a frame from the video on Shorts.
 	VideoCover map[string]any `json:"video_cover,omitempty"`
 	// Per-platform options.
 	Pinterest      map[string]any       `json:"pinterest,omitempty"`

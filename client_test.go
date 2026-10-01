@@ -401,6 +401,68 @@ func TestBatchAnalyticsQueryJoinsIDs(t *testing.T) {
 	}
 }
 
+func TestPostsGetApproval(t *testing.T) {
+	var gotMethod, gotPath string
+	body := `{"data":{"post_id":"123456","status":"rejected","workflow":{"id":"42","name":"Content approval"},"requested_by":{"id":"7d1f3c52","name":"Alex"},"requested_at":"2026-10-01T09:00:00.000Z","current_step":null,"steps":[{"order":1,"name":"Team review","require_mode":"any","status":"approved","approvers":[{"id":"2b8e6f90","name":"Sam","email":"sam@example.com","status":"approved","decided_at":"2026-10-01T10:15:00.000Z","comment":null}]},{"order":2,"name":"Client approval","require_mode":"all","status":"rejected","approvers":[{"id":"c4a09e1d","name":"Jordan","email":null,"status":"rejected","decided_at":"2026-10-01T14:30:00.000Z","comment":"The image does not match the caption"}]}],"rejection":{"by":{"id":"c4a09e1d","name":"Jordan"},"reason":"The image does not match the caption","at":"2026-10-01T14:30:00.000Z","step":2},"comments":[{"id":"5f3a2b1c","author":{"id":"c4a09e1d","name":"Jordan"},"message":"Please use the new logo","account":"instagram","created_at":"2026-10-01T14:28:00.000Z"},{"id":"1a2b3c4d","author":null,"message":"Caption edited","account":null,"created_at":"2026-09-28T22:27:30.000Z"}]}}`
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if strings.HasSuffix(r.URL.Path, "/posts/1/approval") {
+			fmt.Fprint(w, `{"data":{"post_id":"1","status":"none","workflow":null,"requested_by":null,"requested_at":null,"current_step":null,"steps":[],"rejection":null,"comments":[]}}`)
+			return
+		}
+		fmt.Fprint(w, body)
+	}))
+
+	res, err := client.Posts.GetApproval(context.Background(), "123456")
+	if err != nil {
+		t.Fatalf("Posts.GetApproval: %v", err)
+	}
+	if gotMethod != http.MethodGet || !strings.HasSuffix(gotPath, "/posts/123456/approval") {
+		t.Fatalf("expected GET /posts/123456/approval, got %s %s", gotMethod, gotPath)
+	}
+	review := res.Data
+	if review.PostID != "123456" || review.Status != "rejected" {
+		t.Fatalf("unexpected review: %+v", review)
+	}
+	if review.Workflow == nil || review.Workflow.ID == nil || *review.Workflow.ID != "42" {
+		t.Fatalf("unexpected workflow: %+v", review.Workflow)
+	}
+	if review.CurrentStep != nil {
+		t.Fatalf("expected nil CurrentStep, got %d", *review.CurrentStep)
+	}
+	if len(review.Steps) != 2 || review.Steps[1].RequireMode != "all" || review.Steps[1].Status != "rejected" {
+		t.Fatalf("unexpected steps: %+v", review.Steps)
+	}
+	first := review.Steps[0].Approvers[0]
+	if first.Comment != nil || first.DecidedAt == nil || first.Email == nil || *first.Email != "sam@example.com" {
+		t.Fatalf("unexpected first approver: %+v", first)
+	}
+	if review.Steps[1].Approvers[0].Email != nil {
+		t.Fatalf("expected nil email on the second approver")
+	}
+	rej := review.Rejection
+	if rej == nil || rej.By.ID != "c4a09e1d" || rej.Reason == nil || *rej.Reason != "The image does not match the caption" || rej.Step == nil || *rej.Step != 2 {
+		t.Fatalf("unexpected rejection: %+v", rej)
+	}
+	if len(review.Comments) != 2 || review.Comments[0].Account == nil || *review.Comments[0].Account != "instagram" {
+		t.Fatalf("unexpected comments: %+v", review.Comments)
+	}
+	if review.Comments[1].Author != nil || review.Comments[1].Account != nil {
+		t.Fatalf("expected nil author and account on the second comment: %+v", review.Comments[1])
+	}
+
+	none, err := client.Posts.GetApproval(context.Background(), "1")
+	if err != nil {
+		t.Fatalf("Posts.GetApproval (none): %v", err)
+	}
+	if none.Data.Status != "none" || none.Data.Workflow != nil || none.Data.RequestedBy != nil ||
+		none.Data.RequestedAt != nil || none.Data.Rejection != nil ||
+		len(none.Data.Steps) != 0 || len(none.Data.Comments) != 0 {
+		t.Fatalf("unexpected review for a post without a workflow: %+v", none.Data)
+	}
+}
+
 // TestAllServiceMethodsExist is a compile-time inventory of the full method
 // surface: 41 endpoint methods + GET /health + the webhook verify helper.
 func TestAllServiceMethodsExist(t *testing.T) {
@@ -416,6 +478,8 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		client.Posts.List, client.Posts.Get, client.Posts.RecentPlatform,
 		client.Posts.Create, client.Posts.CreateAndPublish, client.Posts.Update,
 		client.Posts.Delete, client.Posts.Publish,
+		// Posts: approval (3)
+		client.Posts.Approve, client.Posts.Reject, client.Posts.GetApproval,
 		// Media (9)
 		client.Media.List, client.Media.Get, client.Media.Upload,
 		client.Media.UploadFromURL, client.Media.UploadFromBase64,

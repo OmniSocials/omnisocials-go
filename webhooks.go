@@ -24,7 +24,7 @@ type Webhook struct {
 	ID  string `json:"id"`
 	URL string `json:"url"`
 	// Events the endpoint is subscribed to: post.scheduled, post.published,
-	// post.failed.
+	// post.failed, post.approved, post.rejected.
 	Events          []string        `json:"events"`
 	IsActive        bool            `json:"is_active"`
 	LastTriggeredAt *string         `json:"last_triggered_at,omitempty"`
@@ -40,7 +40,8 @@ type Webhook struct {
 type WebhookCreateParams struct {
 	// URL is the HTTPS endpoint that will receive event deliveries.
 	URL string `json:"url"`
-	// Events to subscribe to: post.scheduled, post.published, post.failed.
+	// Events to subscribe to: post.scheduled, post.published, post.failed,
+	// post.approved, post.rejected.
 	Events []string `json:"events"`
 }
 
@@ -83,8 +84,9 @@ func (s *WebhooksService) Get(ctx context.Context, id string) (*ItemResponse[Web
 }
 
 // Create calls `POST /webhooks`: register an endpoint for event deliveries
-// (post.scheduled, post.published, post.failed). The response includes the
-// signing Secret; save it, it is only shown once.
+// (post.scheduled, post.published, post.failed, post.approved,
+// post.rejected). The response includes the signing Secret; save it, it is
+// only shown once.
 func (s *WebhooksService) Create(ctx context.Context, params *WebhookCreateParams) (*ItemResponse[Webhook], error) {
 	var out ItemResponse[Webhook]
 	if err := s.client.post(ctx, "/webhooks", jsonBody(params), &out); err != nil {

@@ -271,6 +271,95 @@ type PostRejectParams struct {
 	Comment string `json:"comment,omitempty"`
 }
 
+// PostApprovalUser is a person named in a post's approval review.
+type PostApprovalUser struct {
+	// ID is the user id.
+	ID   string  `json:"id"`
+	Name *string `json:"name"`
+}
+
+// PostApprovalWorkflow names the workflow a post's review runs on.
+type PostApprovalWorkflow struct {
+	// ID is nil for a one-off approval that was not made from a saved
+	// workflow.
+	ID   *string `json:"id"`
+	Name string  `json:"name"`
+}
+
+// PostApprovalApprover is one approver on a step of a post's approval
+// review.
+type PostApprovalApprover struct {
+	// ID is the approver's user id.
+	ID    string  `json:"id"`
+	Name  *string `json:"name"`
+	Email *string `json:"email"`
+	// Status is "pending", "approved", or "rejected".
+	Status string `json:"status"`
+	// DecidedAt is when this approver decided; nil while pending.
+	DecidedAt *string `json:"decided_at"`
+	// Comment is the reason this approver gave with a rejection; nil
+	// otherwise.
+	Comment *string `json:"comment"`
+}
+
+// PostApprovalStep is one step of a post's approval review.
+type PostApprovalStep struct {
+	// Order is the 1-based step order; steps are approved in order.
+	Order int    `json:"order"`
+	Name  string `json:"name"`
+	// RequireMode is "any" (one approver of the step is enough) or "all"
+	// (every approver must approve).
+	RequireMode string `json:"require_mode"`
+	// Status is "pending", "approved", or "rejected".
+	Status    string                 `json:"status"`
+	Approvers []PostApprovalApprover `json:"approvers"`
+}
+
+// PostApprovalRejection says who rejected the post, why, when, and on
+// which step.
+type PostApprovalRejection struct {
+	By     PostApprovalUser `json:"by"`
+	Reason *string          `json:"reason"`
+	At     *string          `json:"at"`
+	// Step is the order of the step the rejection happened on.
+	Step *int `json:"step"`
+}
+
+// PostApprovalComment is one entry of the review thread.
+type PostApprovalComment struct {
+	ID string `json:"id"`
+	// Author is nil when the author is not known.
+	Author  *PostApprovalUser `json:"author"`
+	Message string            `json:"message"`
+	// Account is the channel the comment is about ("instagram",
+	// "linkedin_page", ...); nil means the whole post.
+	Account   *string `json:"account"`
+	CreatedAt string  `json:"created_at"`
+}
+
+// PostApproval is the data payload of Posts.GetApproval: the approval
+// review of a post.
+type PostApproval struct {
+	PostID string `json:"post_id"`
+	// Status is "none", "pending", "approved", or "rejected". "none" means
+	// the post has no approval workflow: Workflow, RequestedBy,
+	// RequestedAt, CurrentStep and Rejection are nil, and Steps and
+	// Comments are empty.
+	Status      string                `json:"status"`
+	Workflow    *PostApprovalWorkflow `json:"workflow"`
+	RequestedBy *PostApprovalUser     `json:"requested_by"`
+	RequestedAt *string               `json:"requested_at"`
+	// CurrentStep is the order of the step the post waits on; nil when the
+	// review ended.
+	CurrentStep *int               `json:"current_step"`
+	Steps       []PostApprovalStep `json:"steps"`
+	// Rejection is set when an approver rejected the post; nil otherwise.
+	Rejection *PostApprovalRejection `json:"rejection"`
+	// Comments is the review thread, oldest first. It includes the entries
+	// OmniSocials writes when a reviewer edits the post.
+	Comments []PostApprovalComment `json:"comments"`
+}
+
 // RecentPlatformPostsResponse is the Posts.RecentPlatform response: recent
 // posts fetched live from the connected platform APIs.
 type RecentPlatformPostsResponse struct {
@@ -439,6 +528,21 @@ func (s *PostsService) Approve(ctx context.Context, id string) (*ItemResponse[Po
 func (s *PostsService) Reject(ctx context.Context, id string, params *PostRejectParams) (*ItemResponse[PostRejectResult], error) {
 	var out ItemResponse[PostRejectResult]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/reject", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetApproval calls `GET /posts/:id/approval`: the approval review of a
+// post - every step with its approvers and their decisions, the rejection
+// with its reason, and the comment thread. Use it when ApprovalStatus is
+// "rejected" to learn who rejected the post and why, or while it is
+// "pending" to see who the post waits for. A post without an approval
+// workflow returns Status "none" with empty Steps and Comments. Read-only;
+// requires the posts:read scope.
+func (s *PostsService) GetApproval(ctx context.Context, id string) (*ItemResponse[PostApproval], error) {
+	var out ItemResponse[PostApproval]
+	if err := s.client.get(ctx, "/posts/"+url.PathEscape(id)+"/approval", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

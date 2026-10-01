@@ -250,6 +250,23 @@ _, err = client.Posts.Reject(ctx, one.Data.ID, &omnisocials.PostRejectParams{Com
 
 Only works on a post with `ApprovalStatus: "pending"` (`Status: "in_approval"`). Both act on behalf of the user who owns the API key, who must be a listed approver for the workflow's CURRENT step — steps approve in order, so being an approver on a later step is not enough yet (returns a 403 `forbidden` error). Approving the last step finalizes the post (`scheduled` or `posting`); rejecting stops the whole workflow immediately, not just the current step.
 
+### Read the approval review
+
+```go
+review, err := client.Posts.GetApproval(ctx, one.Data.ID)
+if err != nil {
+	log.Fatal(err)
+}
+if rej := review.Data.Rejection; rej != nil && rej.Reason != nil {
+	fmt.Println("Rejected by", rej.By.ID, "because:", *rej.Reason)
+}
+for _, step := range review.Data.Steps {
+	fmt.Println(step.Order, step.Name, step.Status, len(step.Approvers))
+}
+```
+
+`GetApproval` returns the review of a post that went through an approval workflow: `Status` (`none`, `pending`, `approved`, `rejected`), the `Workflow`, who requested it and when, `CurrentStep` (the step the post waits on, nil when the review ended), every step with its approvers and their decisions, the `Rejection` (`By`, `Reason`, `At`, `Step`; nil when nobody rejected) and the `Comments` thread, oldest first. Nullable fields are pointers. A post without an approval workflow returns `Status: "none"` with empty `Steps` and `Comments`. Read-only; needs the `posts:read` scope.
+
 `Retry` re-publishes only the platforms that failed, on the same post; platforms that already succeeded are never posted again. It is asynchronous: a 200 means the retry is queued, so poll `Get` for the outcome. Max 3 retries per platform.
 
 ### Recent platform posts
@@ -488,6 +505,8 @@ if spots.Error == nil && len(spots.Locations) > 0 {
 
 ## Webhooks
 
+Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`.
+
 ### Manage endpoints
 
 ```go
@@ -555,6 +574,9 @@ func main() {
 			log.Println("Published:", data["post_id"], data["targets"])
 		case "post.failed":
 			log.Println("Failed:", data["post_id"])
+		case "post.rejected":
+			approval, _ := data["approval"].(map[string]any)
+			log.Println("Rejected:", data["post_id"], approval["reason"])
 		}
 		w.WriteHeader(http.StatusOK)
 	})

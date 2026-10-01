@@ -41,6 +41,34 @@ func TestVerifyWebhookSignatureRoundTrip(t *testing.T) {
 	}
 }
 
+func TestVerifyWebhookSignatureRejectedEventKeepsApproval(t *testing.T) {
+	secret := "whsec_test_secret"
+	body := `{"id":"evt_456","type":"post.rejected","created_at":"2026-10-02T09:00:05.000Z","data":{"post_id":"123456","workspace_id":789,"status":"rejected","post_type":"Post","scheduled_at":"2026-10-03T14:00:00.000Z","published_at":null,"targets":[],"approval":{"status":"rejected","decided_by":"c4a09e1d","reason":"Wrong product photo"}}}`
+	header := signLikeDispatcher(secret, time.Now().Unix(), body)
+
+	event, err := VerifyWebhookSignature([]byte(body), header, secret, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("expected valid signature to verify, got error: %v", err)
+	}
+	if event["type"] != "post.rejected" {
+		t.Fatalf("expected event type post.rejected, got %v", event["type"])
+	}
+	data, ok := event["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected event data object, got %T", event["data"])
+	}
+	approval, ok := data["approval"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data.approval object, got %T", data["approval"])
+	}
+	if approval["status"] != "rejected" || approval["decided_by"] != "c4a09e1d" || approval["reason"] != "Wrong product photo" {
+		t.Fatalf("unexpected approval object: %v", approval)
+	}
+	if targets, ok := data["targets"].([]any); !ok || len(targets) != 0 {
+		t.Fatalf("expected empty targets, got %v", data["targets"])
+	}
+}
+
 func TestVerifyWebhookSignatureTamperedBodyFails(t *testing.T) {
 	secret := "whsec_test_secret"
 	timestamp := time.Now().Unix()

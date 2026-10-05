@@ -589,7 +589,7 @@ func main() {
 
 ## Inbox
 
-Social inbox conversations (DMs, comments, and mentions) across connected platforms: Instagram, Facebook, LinkedIn, TikTok (video comments only), YouTube (video comments only), X (DMs), and Threads (replies and mentions, no DMs). TikTok and YouTube replies are comments only; TikTok replies are capped at 150 characters. Threads inbox is currently rolling out; until Meta approves the permissions it is disabled on production, and it needs a Threads connection with the reply permission.
+Social inbox conversations (DMs, comments, and mentions) across connected platforms: Instagram, Facebook, LinkedIn, TikTok (video comments only), YouTube (video comments only), X (DMs), and Threads (replies and mentions, no DMs). TikTok and YouTube replies are comments only; TikTok replies are capped at 150 characters. The Threads inbox needs a Threads connection with the reply permission: a Threads account connected before 2026-09-14 needs a one-time reconnect in the dashboard (until then replies and hides answer 401 `reauth_required`).
 
 ```go
 conversations, err := client.Inbox.ListConversations(ctx, &omnisocials.InboxListParams{

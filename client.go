@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.8.0"
+const Version = "0.9.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -80,6 +80,9 @@ type Client struct {
 	Locations *LocationsService
 	// Audio covers /audio: Instagram Reels licensed audio search.
 	Audio *AudioService
+	// Pinterest covers /pinterest: product Pins for product tagging (list +
+	// validate).
+	Pinterest *PinterestService
 	// Webhooks covers /webhooks: endpoint management + secret rotation.
 	Webhooks *WebhooksService
 	// Inbox covers /inbox: social inbox conversations, messages, mark-read,
@@ -168,6 +171,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Analytics = &AnalyticsService{client: c}
 	c.Locations = &LocationsService{client: c}
 	c.Audio = &AudioService{client: c}
+	c.Pinterest = &PinterestService{client: c}
 	c.Webhooks = &WebhooksService{client: c}
 	c.Inbox = &InboxService{client: c}
 	return c, nil

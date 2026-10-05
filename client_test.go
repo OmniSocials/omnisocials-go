@@ -463,8 +463,92 @@ func TestPostsGetApproval(t *testing.T) {
 	}
 }
 
+func TestPinterestListProducts(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	body := `{"products":[{"pin_id":"813744226420795884","title":"Blue ribbed top","description":null,
+		"link":"https://shop.example.com/products/blue-ribbed-top","image_url":null,
+		"price":24.99,"currency":"EUR","availability":"IN_STOCK","item_id":"TOP-BLUE-M"}],
+		"bookmark":"next-page","source":"catalog","catalog_access":true,
+		"product_groups":[{"id":"443727193917","name":"All Products"}],"product_group_id":"443727193917"}`
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		fmt.Fprint(w, body)
+	}))
+
+	res, err := client.Pinterest.ListProducts(context.Background(), &PinterestProductListParams{
+		Source: "catalog", ProductGroupID: "443727193917", Bookmark: "abc", PageSize: 50,
+	})
+	if err != nil {
+		t.Fatalf("Pinterest.ListProducts: %v", err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/pinterest/products" {
+		t.Fatalf("expected GET /pinterest/products, got %s %s", gotMethod, gotPath)
+	}
+	if gotQuery != "bookmark=abc&page_size=50&product_group_id=443727193917&source=catalog" {
+		t.Fatalf("unexpected query string %q", gotQuery)
+	}
+	if res.Error != nil || len(res.Products) != 1 {
+		t.Fatalf("unexpected response: %+v", res)
+	}
+	product := res.Products[0]
+	if product.PinID != "813744226420795884" || product.Title == nil || *product.Title != "Blue ribbed top" ||
+		product.Description != nil || product.Price == nil || *product.Price != 24.99 ||
+		product.Currency == nil || *product.Currency != "EUR" || product.ItemID == nil || *product.ItemID != "TOP-BLUE-M" {
+		t.Fatalf("unexpected product: %+v", product)
+	}
+	if res.Bookmark == nil || *res.Bookmark != "next-page" || res.Source != "catalog" || !res.CatalogAccess ||
+		len(res.ProductGroups) != 1 || res.ProductGroups[0].ID != "443727193917" ||
+		res.ProductGroupID == nil || *res.ProductGroupID != "443727193917" {
+		t.Fatalf("unexpected list fields: %+v", res)
+	}
+
+	// A list that could not be read is HTTP 200 with an error object and no
+	// products. Nil params send no query.
+	body = `{"error":{"code":"pinterest_catalog_access_required","message":"Connect the catalog."},"catalog_access":false}`
+	res, err = client.Pinterest.ListProducts(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Pinterest.ListProducts (error envelope): %v", err)
+	}
+	if gotQuery != "" {
+		t.Fatalf("expected no query for nil params, got %q", gotQuery)
+	}
+	if res.Error == nil || res.Error.Code != "pinterest_catalog_access_required" || res.Products != nil || res.CatalogAccess {
+		t.Fatalf("unexpected error envelope: %+v", res)
+	}
+}
+
+func TestPinterestValidateProduct(t *testing.T) {
+	var gotPath, gotID string
+	body := `{"valid":true,"pin_id":"813744226420795884","title":"Blue ribbed top","link":null,"image_url":null}`
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotID = r.URL.Path, r.URL.Query().Get("id")
+		fmt.Fprint(w, body)
+	}))
+
+	link := "https://www.pinterest.com/pin/813744226420795884/"
+	res, err := client.Pinterest.ValidateProduct(context.Background(), link)
+	if err != nil {
+		t.Fatalf("Pinterest.ValidateProduct: %v", err)
+	}
+	if gotPath != "/pinterest/products/validate" || gotID != link {
+		t.Fatalf("unexpected request: path %q, id %q", gotPath, gotID)
+	}
+	if !res.Valid || res.PinID == nil || *res.PinID != "813744226420795884" || res.Title == nil || res.Link != nil || res.Unverified {
+		t.Fatalf("unexpected response: %+v", res)
+	}
+
+	body = `{"valid":false,"pin_id":"813744226420795884","unverified":true,"reason":"Pinterest did not answer."}`
+	res, err = client.Pinterest.ValidateProduct(context.Background(), "813744226420795884")
+	if err != nil {
+		t.Fatalf("Pinterest.ValidateProduct (unverified): %v", err)
+	}
+	if res.Valid || !res.Unverified || res.Reason == nil || *res.Reason != "Pinterest did not answer." {
+		t.Fatalf("unexpected unverified response: %+v", res)
+	}
+}
+
 // TestAllServiceMethodsExist is a compile-time inventory of the full method
-// surface: 41 endpoint methods + GET /health + the webhook verify helper.
+// surface: 46 endpoint methods + GET /health + the webhook verify helper.
 func TestAllServiceMethodsExist(t *testing.T) {
 	client, err := NewClient(WithAPIKey("omsk_test_key"))
 	if err != nil {
@@ -498,6 +582,8 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		client.Analytics.Accounts, client.Analytics.BestTimes,
 		// Locations (2)
 		client.Locations.Search, client.Locations.Validate,
+		// Pinterest (2)
+		client.Pinterest.ListProducts, client.Pinterest.ValidateProduct,
 		// Webhooks (6)
 		client.Webhooks.List, client.Webhooks.Get, client.Webhooks.Create,
 		client.Webhooks.Update, client.Webhooks.Delete, client.Webhooks.RotateSecret,

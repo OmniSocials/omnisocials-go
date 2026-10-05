@@ -69,7 +69,12 @@ type PostCreateParams struct {
 	// only), Pinterest and YouTube Shorts (shown on Shorts only on channels
 	// where YouTube has enabled custom Shorts thumbnails).
 	VideoCover map[string]any `json:"video_cover,omitempty"`
-	// Per-platform options.
+	// Per-platform options. Pinterest accepts "product_tags": up to 24
+	// product Pins of the connected Pinterest account, each as a Pin id
+	// string (see Pinterest.ListProducts) or a Pin link. Products of other
+	// merchants cannot be tagged. The tags are added right after the Pin is
+	// published; a product Pinterest refuses never fails the post. More than
+	// 24 entries or an invalid entry returns 400 validation_error.
 	Pinterest      map[string]any       `json:"pinterest,omitempty"`
 	YouTube        map[string]any       `json:"youtube,omitempty"`
 	Instagram      map[string]any       `json:"instagram,omitempty"`
@@ -106,6 +111,8 @@ type PostUpdateParams struct {
 	// VideoCover replaces the stored video cover wholesale (same shape as
 	// PostCreateParams.VideoCover).
 	VideoCover    map[string]any `json:"video_cover,omitempty"`
+	// Pinterest replaces the stored Pinterest options wholesale, so leave
+	// "product_tags" out (or send an empty list) to remove the product tags.
 	Pinterest     map[string]any `json:"pinterest,omitempty"`
 	YouTube       map[string]any `json:"youtube,omitempty"`
 	Instagram     map[string]any `json:"instagram,omitempty"`
@@ -200,7 +207,9 @@ type Post struct {
 	// Mastodon, and Threads include thread_parts; Threads includes a
 	// "location" object {id, name, address, city, country} when a location
 	// tag is set; comment-capable platforms include first_comment /
-	// first_comment_result).
+	// first_comment_result; Pinterest includes product_tags and, on a
+	// published post that had tags, the read-only product_tags_result
+	// {requested, tagged, skipped: [{pin_id, reason}], error}).
 	Pinterest      map[string]any `json:"pinterest,omitempty"`
 	YouTube        map[string]any `json:"youtube,omitempty"`
 	Instagram      map[string]any `json:"instagram,omitempty"`

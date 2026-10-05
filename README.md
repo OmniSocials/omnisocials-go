@@ -503,6 +503,44 @@ if spots.Error == nil && len(spots.Locations) > 0 {
 }
 ```
 
+## Pinterest product tags
+
+Tag products on a Pin so people can shop the items in the image. `client.Pinterest.ListProducts` returns the product Pins of the connected Pinterest account; pass their `PinID` values (max 24) as `product_tags` in the `Pinterest` options of the post. Only product Pins of your own account can be tagged; products of other merchants cannot. The tags are added right after the Pin is published. A product that Pinterest refuses never fails the post: the outcome is on the post as `Pinterest["product_tags_result"]` (`requested`, `tagged`, `skipped`, `error`).
+
+```go
+list, err := client.Pinterest.ListProducts(ctx, nil)
+if err != nil {
+	log.Fatal(err)
+}
+
+if list.Error != nil {
+	// HTTP 200 without products: pinterest_not_connected,
+	// pinterest_catalog_access_required or platform_error
+	log.Println(list.Error.Code, list.Error.Message)
+} else {
+	productTags := []string{}
+	for _, product := range list.Products {
+		if len(productTags) < 3 {
+			productTags = append(productTags, product.PinID)
+		}
+	}
+
+	_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+		Content:     "Our summer picks",
+		Channels:    []string{"pinterest"},
+		MediaURLs:   []string{"https://example.com/summer-look.jpg"},
+		ScheduledAt: "2026-08-01T09:00:00Z",
+		Pinterest: map[string]any{
+			"board_id":     "1234567890",
+			"title":        "Summer picks",
+			"product_tags": productTags,
+		},
+	})
+}
+```
+
+With nil params (or an empty `Source`) the list reads the Pinterest catalog (with `Price`, `Currency`, `Availability` and `ItemID`) when the connection has catalog access, else the account's own Pins. Catalog access is given one time in the OmniSocials composer: Pinterest options, Add products, Connect catalog. `Source: "pins"` scans up to 250 Pins per call, so `Products` can be empty while `Bookmark` is set; call again with `&omnisocials.PinterestProductListParams{Bookmark: *list.Bookmark}`. To check one Pin id or Pin link before you post, call `client.Pinterest.ValidateProduct(ctx, "813744226420795884")`. On `Posts.Update` the `Pinterest` map replaces the stored one, so leave `product_tags` out to remove the tags.
+
 ## Webhooks
 
 Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`.

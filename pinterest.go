@@ -86,6 +86,10 @@ type PinterestProductsResponse struct {
 	// CatalogAccess is true when the Pinterest connection can read the
 	// catalog.
 	CatalogAccess bool `json:"catalog_access,omitempty"`
+	// NoCatalog is true when the connection has catalog access but the
+	// Pinterest account has no catalog yet; Products and ProductGroups are
+	// then empty.
+	NoCatalog bool `json:"no_catalog,omitempty"`
 	// ProductGroups lists the product groups of the account (catalog source
 	// only).
 	ProductGroups []PinterestProductGroup `json:"product_groups,omitempty"`

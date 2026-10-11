@@ -1,0 +1,122 @@
+package omnisocials
+
+import (
+	"context"
+	"net/url"
+	"strconv"
+)
+
+// AutomationsService covers the /automations endpoints: comment-to-DM
+// automations. An automation answers a keyword in an Instagram comment (or a
+// DM, or a story reply) with a DM, once per person, with an optional public
+// reply under the comment. Instagram rules: one private reply per comment,
+// within 7 days; OmniSocials caps sends at 180 DMs an hour per account. The
+// scopes are opt-in on the API key: automations:read for List, Get and
+// ListEvents, automations:write for Create, Update and Delete (and for
+// PostCreateParams.CommentDMAutomation).
+type AutomationsService struct {
+	client *Client
+}
+
+// List calls `GET /automations`: the workspace's comment-to-DM automations,
+// optionally filtered by Status ("active", "paused", "completed") or by the
+// OmniSocials PostID they are bound to. A nil params value lists them all.
+// Requires the automations:read scope.
+func (s *AutomationsService) List(ctx context.Context, params *AutomationListParams) (*ListResponse[Automation], error) {
+	query := url.Values{}
+	if params != nil {
+		if params.Status != "" {
+			query.Set("status", params.Status)
+		}
+		if params.PostID != "" {
+			query.Set("post_id", params.PostID)
+		}
+	}
+	var out ListResponse[Automation]
+	if err := s.client.get(ctx, "/automations", query, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Get calls `GET /automations/:id`: fetch a single automation. Requires the
+// automations:read scope.
+func (s *AutomationsService) Get(ctx context.Context, id string) (*ItemResponse[Automation], error) {
+	var out ItemResponse[Automation]
+	if err := s.client.get(ctx, "/automations/"+url.PathEscape(id), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Create calls `POST /automations`: create a comment-to-DM automation. Bind
+// it to one post with PostID (an OmniSocials post that goes to Instagram,
+// scheduled or live; one automation per post) or InstagramMediaID (a post
+// published outside OmniSocials), not both; a Trigger with Scope "next_post"
+// or "any" needs neither. Actions.DM.Text is required. Requires the
+// automations:write scope. Errors: 400 validation_error, 400
+// post_not_instagram, 400 post_required, 404 post_not_found, 404
+// instagram_media_not_found, 409 instagram_not_connected, 409
+// instagram_needs_reauth, 409 automation_exists (the error body also carries
+// automation_id).
+func (s *AutomationsService) Create(ctx context.Context, params *AutomationCreateParams) (*ItemResponse[Automation], error) {
+	var out ItemResponse[Automation]
+	if err := s.client.post(ctx, "/automations", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Update calls `PATCH /automations/:id`: partial update. Each section
+// (Trigger, Actions, Limits) is merged into the stored one, fields you leave
+// out keep their value: new Trigger.Keywords keep the kinds, the scope and
+// the match; a new Actions.DM.Text keeps the public reply; Limits with only
+// StopAt keeps MaxSends. PublicReply.Enabled omnisocials.Bool(false) turns
+// the public reply off; a Limits map with "max_sends": omnisocials.Null
+// removes that limit (see AutomationUpdateParams.Limits). Status "paused"
+// pauses and "active" resumes; another PostID / InstagramMediaID moves the
+// automation to that post. A "completed" automation starts again when its
+// limits or trigger change. Requires the automations:write scope. 400
+// no_fields when the body is empty.
+func (s *AutomationsService) Update(ctx context.Context, id string, params *AutomationUpdateParams) (*ItemResponse[Automation], error) {
+	var out ItemResponse[Automation]
+	if err := s.client.patch(ctx, "/automations/"+url.PathEscape(id), jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Delete calls `DELETE /automations/:id`: delete an automation (204 on
+// success). Requires the automations:write scope.
+func (s *AutomationsService) Delete(ctx context.Context, id string) error {
+	return s.client.del(ctx, "/automations/"+url.PathEscape(id))
+}
+
+// ListEvents calls `GET /automations/:id/events`: the automation's activity,
+// one event per person it answered, skipped or failed on. Filter by Outcome
+// ("sent", "skipped", "failed", "pending"); Limit is 1 to 100 (default 25),
+// Offset skips. A nil params value uses the defaults. Requires the
+// automations:read scope.
+//
+// Note the response shape (see AutomationEventsResponse): not the plain list
+// envelope but Data, Counts (the number of events per outcome) and
+// Pagination.
+func (s *AutomationsService) ListEvents(ctx context.Context, id string, params *AutomationEventListParams) (*AutomationEventsResponse, error) {
+	query := url.Values{}
+	if params != nil {
+		if params.Outcome != "" {
+			query.Set("outcome", params.Outcome)
+		}
+		if params.Limit > 0 {
+			query.Set("limit", strconv.Itoa(params.Limit))
+		}
+		if params.Offset > 0 {
+			query.Set("offset", strconv.Itoa(params.Offset))
+		}
+	}
+	var out AutomationEventsResponse
+	if err := s.client.get(ctx, "/automations/"+url.PathEscape(id)+"/events", query, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.9.0"
+const Version = "0.10.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -83,6 +83,9 @@ type Client struct {
 	// Pinterest covers /pinterest: product Pins for product tagging (list +
 	// validate).
 	Pinterest *PinterestService
+	// Automations covers /automations: comment-to-DM automations (list,
+	// get, create, update, delete, events).
+	Automations *AutomationsService
 	// Webhooks covers /webhooks: endpoint management + secret rotation.
 	Webhooks *WebhooksService
 	// Inbox covers /inbox: social inbox conversations, messages, mark-read,
@@ -172,6 +175,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Locations = &LocationsService{client: c}
 	c.Audio = &AudioService{client: c}
 	c.Pinterest = &PinterestService{client: c}
+	c.Automations = &AutomationsService{client: c}
 	c.Webhooks = &WebhooksService{client: c}
 	c.Inbox = &InboxService{client: c}
 	return c, nil

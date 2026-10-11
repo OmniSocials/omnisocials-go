@@ -106,6 +106,57 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 })
 ```
 
+### Planned drafts
+
+Set `Draft: omnisocials.Bool(true)` with `ScheduledAt` to store the post as a draft that keeps its time. It shows on the dashboard calendar at that slot with a dashed outline and the scheduler never publishes it: a person schedules it from the composer, or you do with `Posts.Update` and `Draft: omnisocials.Bool(false)`. Use it when an agent proposes a slot that a human should confirm. A draft is not allowed with `publish_now` or `ApprovalWorkflowID` (`400 validation_error`). On `Update`, `Draft` false without `ScheduledAt` is a `400 validation_error` when the draft has no time or its time is in the past (pass a new `ScheduledAt` then), and `Draft` true on a scheduled post unschedules it while keeping the time.
+
+```go
+proposal, err := client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:     "Proposed for Friday morning",
+	Channels:    []string{"instagram", "linkedin"},
+	ScheduledAt: "2026-08-01T09:00:00Z",
+	Draft:       omnisocials.Bool(true),
+})
+fmt.Println(proposal.Data.Status, *proposal.Data.ScheduleAt) // draft, the time is kept
+
+// The human agrees: schedule it at the time it already carries
+_, err = client.Posts.Update(ctx, proposal.Data.ID, &omnisocials.PostUpdateParams{Draft: omnisocials.Bool(false)})
+```
+
+### Comment-to-DM automations
+
+Answer a keyword in an Instagram comment with a DM, once per person, with an optional public reply under the comment. Set `CommentDMAutomation` on `Create` (Instagram must be in `Channels`) and the automation is bound to that post; it starts listening once the post is live. Needs the opt-in `automations:write` scope on the key. `client.Automations` manages the automations themselves (`List`, `Get`, `Create`, `Update`, `Delete`) and reads their activity (`ListEvents`, `automations:read`). On `Update`, a `*CommentDMAutomationInput` replaces the post's automation and `omnisocials.Null` removes it. Instagram rules: one private reply per comment, within 7 days; OmniSocials caps sends at 180 DMs an hour per account.
+
+```go
+post, err := client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:     "Comment GUIDE and I will send you the link",
+	Channels:    []string{"instagram"},
+	ScheduledAt: "2026-08-01T09:00:00Z",
+	MediaURLs:   []string{"https://example.com/guide-cover.jpg"},
+	CommentDMAutomation: &omnisocials.CommentDMAutomationInput{
+		Trigger: &omnisocials.CommentDMAutomationTrigger{Keywords: []string{"guide"}, Match: "word"},
+		Actions: omnisocials.AutomationActions{
+			DM: omnisocials.AutomationDM{Text: "Here is the guide: https://example.com/guide"},
+			PublicReply: &omnisocials.AutomationPublicReply{
+				Enabled:    omnisocials.Bool(true),
+				Variations: []string{"Sent you a DM!", "Check your inbox"},
+			},
+		},
+		Limits: &omnisocials.AutomationLimits{MaxSends: omnisocials.Int(500)},
+	},
+})
+automationID := post.Data.CommentDMAutomation.ID
+
+// Later: who was answered, and why someone was skipped
+events, err := client.Automations.ListEvents(ctx, automationID, &omnisocials.AutomationEventListParams{Outcome: "sent"})
+fmt.Println(events.Counts) // map[sent:12 skipped:3]
+for _, event := range events.Data {
+	fmt.Println(event.Kind, event.Outcome)
+}
+```
+
+The events response is `Data`, `Counts` and `Pagination`, not the plain list: `Counts` is the number of events per outcome (`sent`, `skipped`, `failed`, `pending`). An automation can also listen on a post published outside OmniSocials (`client.Automations.Create` with `InstagramMediaID`), on the next post the workspace publishes (`Trigger: &omnisocials.AutomationTriggerInput{Scope: "next_post"}`) or on every post (`Scope: "any"`), and on DMs and story replies (`Kinds: []string{"dm", "story_reply"}`).
+
 ### Publish immediately
 
 ```go
@@ -762,7 +813,7 @@ if err != nil {
 
 ## API scopes
 
-Each API key carries scopes: `posts:read`, `posts:write`, `media:write`, `accounts:read`, `analytics:read`, `webhooks:manage`. A call with a missing scope returns a `*PermissionDeniedError` with code `insufficient_scope`.
+Each API key carries scopes: `posts:read`, `posts:write`, `media:write`, `accounts:read`, `analytics:read`, `webhooks:manage`, plus the opt-in `automations:read` / `automations:write` for comment-to-DM automations. A call with a missing scope returns a `*PermissionDeniedError` with code `insufficient_scope`.
 
 ## Documentation
 

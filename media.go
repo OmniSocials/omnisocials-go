@@ -31,6 +31,9 @@ type MediaItem struct {
 	// Size is a human-formatted size string (e.g. "2.50 MB"), not a byte
 	// count.
 	Size string `json:"size,omitempty"`
+	// Width and Height are the pixel size; nil for videos and older files.
+	Width  *int `json:"width,omitempty"`
+	Height *int `json:"height,omitempty"`
 	// Status is "ready" for normal uploads. Large async URL ingests start as
 	// "processing" (poll until "ready" before using in a post) and become
 	// "failed" when the source could not be fetched/validated.
@@ -321,7 +324,15 @@ func (s *MediaService) CreateUploadURL(ctx context.Context) (*CreateUploadURLRes
 
 // Check calls `POST /media/check`: preflight a file's compatibility with the
 // workspace's connected platforms BEFORE uploading. Provide one of: a public
-// URL, an existing MediaID, or SizeBytes + Mime.
+// URL, an existing MediaID, or SizeBytes + Mime. The map carries "file"
+// ({size_bytes, mime, size_known, width, height}; the pixel size is known
+// for library images, null otherwise), "connected_platforms", "compatible",
+// "warnings", "summary" and "fit": one entry per connected channel with a
+// fit rule for an IMAGE as a feed post ({platform, display_name, fits,
+// ratio, shown: "whole" | "cut", target, default_action: "crop" | "keep" |
+// null, message}). fits false = the ratio is outside the window the channel
+// shows uncropped; default_action is what a post create does unless the
+// post's MediaFit says otherwise. Empty for videos and unknown sizes.
 func (s *MediaService) Check(ctx context.Context, params *MediaCheckParams) (map[string]any, error) {
 	var out map[string]any
 	if err := s.client.post(ctx, "/media/check", jsonBody(params), &out); err != nil {

@@ -344,6 +344,49 @@ func TestJSONBodyAndNullSerialization(t *testing.T) {
 	}
 }
 
+func TestPostDraftFalseSerializes(t *testing.T) {
+	var gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		fmt.Fprint(w, `{"data":{"id":"7","status":"scheduled"}}`)
+	}))
+
+	// A planned draft is scheduled with draft:false, so the false must be
+	// sent (a plain bool with omitempty would drop it).
+	_, err := client.Posts.Update(context.Background(), "7", &PostUpdateParams{Draft: Bool(false)})
+	if err != nil {
+		t.Fatalf("Posts.Update: %v", err)
+	}
+	if !strings.Contains(gotBody, `"draft":false`) {
+		t.Fatalf("expected draft:false in body, got %s", gotBody)
+	}
+}
+
+func TestPostMediaFitSerializes(t *testing.T) {
+	var gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		fmt.Fprint(w, `{"data":{"id":"8","status":"scheduled"},"warnings":[{"code":"image_fit","message":"Kept.","platform":"pinterest","media_url":"https://cdn.example.com/a.jpg","ratio":"9:16","target":"2:3","action":"kept"}]}`)
+	}))
+
+	// media_fit is a per-channel map; the update response can carry
+	// image_fit warnings like a create.
+	res, err := client.Posts.Update(context.Background(), "8", &PostUpdateParams{
+		MediaFit: map[string]string{"instagram": "keep", "pinterest": "crop"},
+	})
+	if err != nil {
+		t.Fatalf("Posts.Update: %v", err)
+	}
+	if !strings.Contains(gotBody, `"media_fit":{"instagram":"keep","pinterest":"crop"}`) {
+		t.Fatalf("expected media_fit in body, got %s", gotBody)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0].Code != "image_fit" || res.Warnings[0].Action != "kept" || res.Warnings[0].Target != "2:3" {
+		t.Fatalf("expected one image_fit warning, got %+v", res.Warnings)
+	}
+}
+
 func TestMediaEntryAltTextSerialization(t *testing.T) {
 	var gotBody string
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -549,6 +592,90 @@ func TestPinterestValidateProduct(t *testing.T) {
 
 // TestAllServiceMethodsExist is a compile-time inventory of the full method
 // surface: 46 endpoint methods + GET /health + the webhook verify helper.
+func TestAutomationsListEvents(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	body := `{"data":[{"id":"1","automation_id":"100000004","kind":"comment","outcome":"sent","reason":null,
+		"reason_label":null,"person":{"id":"1784","username":"jane"},"trigger_id":"1789","trigger_text":"guide please",
+		"message":"Here is the guide","public_reply":"Sent you a DM!","platform_message_id":"m_1",
+		"created_at":"2026-10-10T21:33:34.341Z","sent_at":"2026-10-10T21:33:35.000Z"}],
+		"counts":{"sent":12,"skipped":3},"pagination":{"total":15,"limit":25,"offset":0,"has_more":false}}`
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		fmt.Fprint(w, body)
+	}))
+
+	res, err := client.Automations.ListEvents(context.Background(), "100000004", &AutomationEventListParams{
+		Outcome: "sent", Limit: 25,
+	})
+	if err != nil {
+		t.Fatalf("Automations.ListEvents: %v", err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/automations/100000004/events" {
+		t.Fatalf("expected GET /automations/100000004/events, got %s %s", gotMethod, gotPath)
+	}
+	if gotQuery != "limit=25&outcome=sent" {
+		t.Fatalf("unexpected query string %q", gotQuery)
+	}
+	// The events response is not the plain list envelope: counts per outcome
+	// sit next to data and pagination.
+	if res.Counts["sent"] != 12 || res.Counts["skipped"] != 3 || res.Pagination == nil || res.Pagination.Total != 15 {
+		t.Fatalf("unexpected counts / pagination: %+v", res)
+	}
+	if len(res.Data) != 1 {
+		t.Fatalf("expected one event, got %+v", res.Data)
+	}
+	event := res.Data[0]
+	if event.Kind != "comment" || event.Outcome != "sent" || event.Reason != nil ||
+		event.Person == nil || event.Person.Username == nil || *event.Person.Username != "jane" ||
+		event.Message == nil || *event.Message != "Here is the guide" || event.SentAt == nil {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+}
+
+func TestPostCommentDMAutomationSerializes(t *testing.T) {
+	var gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		fmt.Fprint(w, `{"data":{"id":"9","status":"scheduled","comment_dm_automation":{"id":"100000004",
+			"type":"comment_to_dm","platform":"instagram","status":"active","name":null,"post_id":"9",
+			"instagram_media_id":null,"post":null,"trigger":{"kinds":["comment"],"scope":"post","keywords":["guide"],"match":"word"},
+			"actions":{"dm":{"text":"Here is the guide"}},"limits":{"max_sends":500,"stop_at":null},
+			"stats":{"matched":0,"sent":0,"skipped":0,"failed":0,"last_event_at":null},"created_at":"c","updated_at":"u"}}}`)
+	}))
+
+	res, err := client.Posts.Create(context.Background(), &PostCreateParams{
+		Content:  "Comment GUIDE",
+		Channels: []string{"instagram"},
+		CommentDMAutomation: &CommentDMAutomationInput{
+			Trigger: &CommentDMAutomationTrigger{Keywords: []string{"guide"}, Match: "word"},
+			Actions: AutomationActions{DM: AutomationDM{Text: "Here is the guide"}},
+			Limits:  &AutomationLimits{MaxSends: Int(500)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Posts.Create: %v", err)
+	}
+	want := `"comment_dm_automation":{"trigger":{"keywords":["guide"],"match":"word"},"actions":{"dm":{"text":"Here is the guide"}},"limits":{"max_sends":500}}`
+	if !strings.Contains(gotBody, want) {
+		t.Fatalf("expected the automation in the body, got %s", gotBody)
+	}
+	auto := res.Data.CommentDMAutomation
+	if auto == nil || auto.ID != "100000004" || auto.Post != nil || auto.Name != nil ||
+		auto.Trigger.Scope == nil || *auto.Trigger.Scope != "post" ||
+		auto.Limits.MaxSends == nil || *auto.Limits.MaxSends != 500 || auto.Limits.StopAt != nil {
+		t.Fatalf("unexpected automation on the post: %+v", auto)
+	}
+
+	// On update, omnisocials.Null removes the automation.
+	if _, err := client.Posts.Update(context.Background(), "9", &PostUpdateParams{CommentDMAutomation: Null}); err != nil {
+		t.Fatalf("Posts.Update: %v", err)
+	}
+	if !strings.Contains(gotBody, `"comment_dm_automation":null`) {
+		t.Fatalf("expected an explicit comment_dm_automation null in body, got %s", gotBody)
+	}
+}
+
 func TestAllServiceMethodsExist(t *testing.T) {
 	client, err := NewClient(WithAPIKey("omsk_test_key"))
 	if err != nil {
@@ -584,6 +711,9 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		client.Locations.Search, client.Locations.Validate,
 		// Pinterest (2)
 		client.Pinterest.ListProducts, client.Pinterest.ValidateProduct,
+		// Automations (6)
+		client.Automations.List, client.Automations.Get, client.Automations.Create,
+		client.Automations.Update, client.Automations.Delete, client.Automations.ListEvents,
 		// Webhooks (6)
 		client.Webhooks.List, client.Webhooks.Get, client.Webhooks.Create,
 		client.Webhooks.Update, client.Webhooks.Delete, client.Webhooks.RotateSecret,

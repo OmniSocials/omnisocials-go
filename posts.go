@@ -62,6 +62,34 @@ type PostCreateParams struct {
 	// (dashboard, or Posts.Approve). Requires ScheduledAt; not allowed with
 	// PublishNow. Errors: 404 workflow_not_found, 400 validation_error.
 	ApprovalWorkflowID string `json:"approval_workflow_id,omitempty"`
+	// Draft marks a planned draft (omnisocials.Bool(true)). With ScheduledAt,
+	// the post is stored as "draft" and keeps that time: it shows on the
+	// dashboard calendar at that slot with a dashed outline, the scheduler
+	// never publishes it, and a person schedules it from the composer (or
+	// you do with Posts.Update and Draft false). Use it when an agent
+	// proposes a slot that a human should confirm. Not allowed with
+	// PublishNow or ApprovalWorkflowID (400 validation_error). Without
+	// ScheduledAt it changes nothing: that post is a draft already.
+	Draft *bool `json:"draft,omitempty"`
+	// MediaFit is the image fit per channel for feed images whose ratio is
+	// outside what a channel shows uncropped, keyed by platform id
+	// ("instagram", "pinterest", ...), each "auto", "crop" or "keep". "auto"
+	// (default): Instagram crops a tall or wide image to 4:5 / 1.91:1 around
+	// the subject (Instagram cuts it to that window anyway and Meta cannot
+	// boost a feed post outside it); Pinterest keeps a Pin taller than 2:3
+	// and reports it. "crop" / "keep" force it per channel. Decisions come
+	// back in the response's Warnings with Code "image_fit".
+	MediaFit map[string]string `json:"media_fit,omitempty"`
+	// CommentDMAutomation binds a comment-to-DM automation to this post
+	// (Instagram must be in Channels): a keyword in a comment is answered
+	// with a DM, once per person, with an optional public reply under the
+	// comment. Needs the automations:write scope on the key (403
+	// insufficient_scope, checked before anything else); a bad object is a
+	// 400 validation_error whose message starts with
+	// "comment_dm_automation: ". The response carries
+	// Data.CommentDMAutomation (with Post nil); it starts listening once the
+	// post is live on Instagram.
+	CommentDMAutomation *CommentDMAutomationInput `json:"comment_dm_automation,omitempty"`
 	// VideoCover is the video thumbnail for a post whose media is one
 	// video: {"type": "frame", "thumb_offset": 3000} or {"type": "custom",
 	// "cover_url": "..."}, plus optional per-platform "overrides" keyed by
@@ -97,29 +125,47 @@ type PostCreateParams struct {
 // sent; drafts and scheduled posts can be updated.
 type PostUpdateParams struct {
 	// Content: plain string or map[string]string per-platform captions.
-	Content     any      `json:"content,omitempty"`
-	ScheduledAt string   `json:"scheduled_at,omitempty"`
-	Channels    []string `json:"channels,omitempty"`
+	Content     any    `json:"content,omitempty"`
+	ScheduledAt string `json:"scheduled_at,omitempty"`
+	// Draft is the planned-draft switch (omnisocials.Bool). false without
+	// ScheduledAt schedules a draft at the time it already carries (400
+	// validation_error when it has none or it is in the past). true without
+	// ScheduledAt unschedules a scheduled post: it keeps its time and stays
+	// on the calendar as a dashed draft, nothing publishes; a post waiting
+	// for approval leaves its workflow. true with ScheduledAt moves the time
+	// and keeps (or makes) the post a draft.
+	Draft *bool `json:"draft,omitempty"`
+	// MediaFit is the image fit per channel (same shape as
+	// PostCreateParams.MediaFit). On update, MediaFit alone re-decides the
+	// stored images ("keep" gives the original back). Decisions come back in
+	// the response's Warnings with Code "image_fit".
+	MediaFit map[string]string `json:"media_fit,omitempty"`
+	// CommentDMAutomation: leave nil to keep the post's comment-to-DM
+	// automation untouched, set a *CommentDMAutomationInput to replace it,
+	// or set omnisocials.Null to remove it. Needs the automations:write
+	// scope.
+	CommentDMAutomation any      `json:"comment_dm_automation,omitempty"`
+	Channels            []string `json:"channels,omitempty"`
 	// MediaIDs / MediaURLs: same shapes as PostCreateParams, including
 	// MediaIDEntry / MediaURLEntry values for per-media alt text.
-	MediaIDs      any            `json:"media_ids,omitempty"`
-	MediaURLs     any            `json:"media_urls,omitempty"`
-	Type          string         `json:"type,omitempty"`
-	LocationID    string         `json:"location_id,omitempty"`
-	Collaborators []string       `json:"collaborators,omitempty"`
-	UserTags      []UserTag      `json:"user_tags,omitempty"`
+	MediaIDs      any       `json:"media_ids,omitempty"`
+	MediaURLs     any       `json:"media_urls,omitempty"`
+	Type          string    `json:"type,omitempty"`
+	LocationID    string    `json:"location_id,omitempty"`
+	Collaborators []string  `json:"collaborators,omitempty"`
+	UserTags      []UserTag `json:"user_tags,omitempty"`
 	// VideoCover replaces the stored video cover wholesale (same shape as
 	// PostCreateParams.VideoCover).
-	VideoCover    map[string]any `json:"video_cover,omitempty"`
+	VideoCover map[string]any `json:"video_cover,omitempty"`
 	// Pinterest replaces the stored Pinterest options wholesale, so leave
 	// "product_tags" out (or send an empty list) to remove the product tags.
-	Pinterest     map[string]any `json:"pinterest,omitempty"`
-	YouTube       map[string]any `json:"youtube,omitempty"`
-	Instagram     map[string]any `json:"instagram,omitempty"`
-	Facebook      map[string]any `json:"facebook,omitempty"`
-	LinkedIn      map[string]any `json:"linkedin,omitempty"`
-	LinkedInPage  map[string]any `json:"linkedin_page,omitempty"`
-	TikTok        map[string]any `json:"tiktok,omitempty"`
+	Pinterest    map[string]any `json:"pinterest,omitempty"`
+	YouTube      map[string]any `json:"youtube,omitempty"`
+	Instagram    map[string]any `json:"instagram,omitempty"`
+	Facebook     map[string]any `json:"facebook,omitempty"`
+	LinkedIn     map[string]any `json:"linkedin,omitempty"`
+	LinkedInPage map[string]any `json:"linkedin_page,omitempty"`
+	TikTok       map[string]any `json:"tiktok,omitempty"`
 	// X: set ThreadParts to omnisocials.Null to clear thread mode; omit to
 	// leave the existing thread untouched.
 	X *XPostOptionsUpdate `json:"x,omitempty"`
@@ -181,7 +227,10 @@ type Post struct {
 	Accounts []string `json:"accounts,omitempty"`
 	// Media is either a []string of URLs shared across platforms or a
 	// per-platform map. Items include an optional "alt" accessibility
-	// description when one was set.
+	// description when one was set. A channel entry decided by MediaFit also
+	// carries "fit" ("crop" or "keep") and, when cropped, "crop" ({of, id?,
+	// ratio, focus: {x, y} or null}: the original it was cut from, the
+	// crop's ratio and the focus point).
 	Media any `json:"media,omitempty"`
 	// ScheduleAt is the scheduled publish time (nil for drafts).
 	ScheduleAt     *string `json:"schedule_at,omitempty"`
@@ -225,6 +274,11 @@ type Post struct {
 	// LinkedInPoll holds the non-sponsored LinkedIn poll(s) on this post,
 	// echoed back per channel when either is one.
 	LinkedInPoll *LinkedInPolls `json:"linkedin_poll,omitempty"`
+	// CommentDMAutomation is the comment-to-DM automation bound to this post
+	// (with Post nil) on a post that goes to Instagram; nil when it has none.
+	// Set on Posts.Get, and on the create / update response when the request
+	// carried the field.
+	CommentDMAutomation *Automation `json:"comment_dm_automation,omitempty"`
 	// Errors maps platform -> user-friendly error message. Populated when
 	// Status is "failed" or "warning"; only failed platforms appear.
 	Errors    map[string]string `json:"errors,omitempty"`
@@ -450,6 +504,11 @@ func (s *PostsService) RecentPlatform(ctx context.Context, params *RecentPlatfor
 // CreateAndPublish, Update, and Publish. It is distinct from the
 // x_url_post_credits warning above (create-time, non-blocking) and from the
 // publish-time-only-X-target-fails behavior once enforcement starts.
+//
+// The same Warnings field carries one PostWarning with Code "image_fit" per
+// channel decision on a feed image whose ratio is outside what the channel
+// shows uncropped (Action "cropped", "kept" or "crop_failed");
+// PostCreateParams.MediaFit steers it per channel.
 func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create", jsonBody(params), &out); err != nil {
@@ -473,7 +532,10 @@ func (s *PostsService) CreateAndPublish(ctx context.Context, params *PostCreateP
 // Update calls `PATCH /posts/:id`: update a draft or scheduled post. See
 // Create for the 402 "x_credits_insufficient" schedule-time credit gate: it
 // also applies here when the update schedules a draft, adds X, or edits the
-// text/link of a scheduled X link post.
+// text/link of a scheduled X link post. Like Create, the response's Warnings
+// field can carry "image_fit" entries when the update changes the images or
+// MediaFit (MediaFit alone re-decides the stored images; "keep" gives the
+// original back).
 func (s *PostsService) Update(ctx context.Context, id string, params *PostUpdateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.patch(ctx, "/posts/"+url.PathEscape(id), jsonBody(params), &out); err != nil {

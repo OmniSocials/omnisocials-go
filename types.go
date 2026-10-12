@@ -141,12 +141,29 @@ type ThreadPart struct {
 	MediaURLs any `json:"media_urls,omitempty"`
 }
 
+// ChannelPoll is a poll on an X, Threads or Mastodon post (the post text is
+// the question). X: 2 to 4 options of up to 25 characters, DurationMinutes
+// 5 to 10080 (default 1440). Threads: 2 to 4 options of 1 to 25 characters,
+// closed by Threads after 24 hours. Mastodon: options and ExpiresIn (seconds)
+// within the instance's limits, plus Multiple and HideTotals. A poll and
+// media do not go together on these platforms; on a thread the poll goes on
+// the first part.
+type ChannelPoll struct {
+	Options         []string `json:"options"`
+	DurationMinutes int      `json:"duration_minutes,omitempty"`
+	ExpiresIn       int      `json:"expires_in,omitempty"`
+	Multiple        *bool    `json:"multiple,omitempty"`
+	HideTotals      *bool    `json:"hide_totals,omitempty"`
+}
+
 // XPostOptions holds X (Twitter) specific options for post creation.
 type XPostOptions struct {
 	// ReplySettings: "" (everyone), "following", or "mentionedUsers".
 	ReplySettings   string `json:"reply_settings,omitempty"`
 	PaidPartnership *bool  `json:"paid_partnership,omitempty"`
 	MadeWithAI      *bool  `json:"made_with_ai,omitempty"`
+	// Poll on the tweet; see ChannelPoll.
+	Poll *ChannelPoll `json:"poll,omitempty"`
 	// ThreadParts: provide 2-25 parts to publish as a thread. Omit for a
 	// single tweet.
 	ThreadParts []ThreadPart `json:"thread_parts,omitempty"`
@@ -157,6 +174,9 @@ type XPostOptionsUpdate struct {
 	ReplySettings   *string `json:"reply_settings,omitempty"`
 	PaidPartnership *bool   `json:"paid_partnership,omitempty"`
 	MadeWithAI      *bool   `json:"made_with_ai,omitempty"`
+	// Poll: leave nil to keep the existing poll untouched, set a
+	// *ChannelPoll to replace it, or set omnisocials.Null to remove it.
+	Poll any `json:"poll,omitempty"`
 	// ThreadParts: leave nil to keep the existing thread untouched, set a
 	// []ThreadPart to replace it, or set omnisocials.Null to clear thread
 	// mode (revert to a single tweet).
@@ -180,6 +200,8 @@ type BlueskyPostOptionsUpdate struct {
 
 // MastodonPostOptions holds Mastodon specific options for post creation.
 type MastodonPostOptions struct {
+	// Poll on the status; see ChannelPoll.
+	Poll *ChannelPoll `json:"poll,omitempty"`
 	// ThreadParts: provide 2-25 parts to publish as a thread. Omit for a
 	// single status.
 	ThreadParts []ThreadPart `json:"thread_parts,omitempty"`
@@ -187,6 +209,9 @@ type MastodonPostOptions struct {
 
 // MastodonPostOptionsUpdate is the update-side variant of MastodonPostOptions.
 type MastodonPostOptionsUpdate struct {
+	// Poll: leave nil to keep the existing poll untouched, set a
+	// *ChannelPoll to replace it, or set omnisocials.Null to remove it.
+	Poll any `json:"poll,omitempty"`
 	// ThreadParts: leave nil to keep the existing thread untouched, set a
 	// []ThreadPart to replace it, or set omnisocials.Null to clear thread
 	// mode (revert to a single status).
@@ -207,6 +232,8 @@ type ThreadsLocationInput struct {
 
 // ThreadsPostOptions holds Threads (Meta) specific options for post creation.
 type ThreadsPostOptions struct {
+	// Poll on the post (a text-only post); see ChannelPoll.
+	Poll *ChannelPoll `json:"poll,omitempty"`
 	// ThreadParts: provide 2-25 parts to publish as a chained thread; parts
 	// after the first publish as replies to the previous part, and the
 	// Threads caption is taken from part 1. Omit for a single post.
@@ -224,6 +251,9 @@ type ThreadsPostOptions struct {
 
 // ThreadsPostOptionsUpdate is the update-side variant of ThreadsPostOptions.
 type ThreadsPostOptionsUpdate struct {
+	// Poll: leave nil to keep the existing poll untouched, set a
+	// *ChannelPoll to replace it, or set omnisocials.Null to remove it.
+	Poll any `json:"poll,omitempty"`
 	// ThreadParts: leave nil to keep the existing thread untouched, set a
 	// []ThreadPart to replace it, or set omnisocials.Null to clear thread
 	// mode (revert to a single post).

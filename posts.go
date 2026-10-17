@@ -115,6 +115,8 @@ type PostCreateParams struct {
 	Mastodon       *MastodonPostOptions `json:"mastodon,omitempty"`
 	Threads        *ThreadsPostOptions  `json:"threads,omitempty"`
 	GoogleBusiness map[string]any       `json:"google_business,omitempty"`
+	// Telegram holds the Telegram options; see TelegramPostOptions.
+	Telegram *TelegramPostOptions `json:"telegram,omitempty"`
 	// LinkedInPoll holds non-sponsored LinkedIn poll(s), independent per
 	// channel. Mutually exclusive with media and a link share on that
 	// channel's post - a poll takes priority over both at publish time.
@@ -176,6 +178,9 @@ type PostUpdateParams struct {
 	// Threads: set ThreadParts to omnisocials.Null to clear thread mode.
 	Threads        *ThreadsPostOptionsUpdate `json:"threads,omitempty"`
 	GoogleBusiness map[string]any            `json:"google_business,omitempty"`
+	// Telegram merges into the stored Telegram options; see
+	// TelegramPostOptionsUpdate.
+	Telegram *TelegramPostOptionsUpdate `json:"telegram,omitempty"`
 	// LinkedInPoll replaces wholesale - send the full desired state for
 	// both channels. Leave nil to leave both channels' polls untouched, set
 	// a *LinkedInPolls to add/replace poll(s), or set a channel field to
@@ -271,6 +276,10 @@ type Post struct {
 	Mastodon       map[string]any `json:"mastodon,omitempty"`
 	Threads        map[string]any `json:"threads,omitempty"`
 	GoogleBusiness map[string]any `json:"google_business,omitempty"`
+	// Telegram echoes the Telegram options and, once the post was sent,
+	// "result" {chat_id, message_ids, pinned, pin_error, text_message_id,
+	// link_public, link_private, sent_at}.
+	Telegram map[string]any `json:"telegram,omitempty"`
 	// LinkedInPoll holds the non-sponsored LinkedIn poll(s) on this post,
 	// echoed back per channel when either is one.
 	LinkedInPoll *LinkedInPolls `json:"linkedin_poll,omitempty"`

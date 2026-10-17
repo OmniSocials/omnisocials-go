@@ -1,6 +1,6 @@
 # OmniSocials Go SDK
 
-The official Go client for the [OmniSocials API](https://docs.omnisocials.com). Schedule and publish posts to Instagram, Facebook, LinkedIn, YouTube, TikTok, X, Pinterest, Bluesky, Threads, Mastodon, and Google Business from one API.
+The official Go SDK for OmniSocials: post, schedule, reply and report on 11 social platforms (Instagram, Facebook, LinkedIn, X, TikTok, YouTube, Threads, Pinterest, Bluesky, Mastodon and Google Business) from one API. Guide: [omnisocials.com/sdk/go](https://omnisocials.com/sdk/go)
 
 - Standard library only, no dependencies (net/http, crypto/hmac)
 - Context-first methods and typed request/response structs
@@ -47,7 +47,7 @@ func main() {
 
 ## Authentication
 
-Create an API key in the OmniSocials app under **Settings -> API Keys**. Keys look like `omsk_live_...` (or `omsk_test_...`).
+Create an API key in the OmniSocials app under **Settings -> API Keys**. Keys start with `omsk_live_`. There are no test keys and no test mode: every key works on your real connected accounts. To try things safely, leave out `ScheduledAt` so the post stays a draft (a draft never publishes on its own), or use a separate workspace with test accounts.
 
 The client reads `OMNISOCIALS_API_KEY` from the environment, or you can pass it explicitly:
 
@@ -108,6 +108,8 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 
 ### Planned drafts
 
+> **Not yet released (coming in 0.10.0).** This section describes the next SDK release. The current release is 0.9.0.
+
 Set `Draft: omnisocials.Bool(true)` with `ScheduledAt` to store the post as a draft that keeps its time. It shows on the dashboard calendar at that slot with a dashed outline and the scheduler never publishes it: a person schedules it from the composer, or you do with `Posts.Update` and `Draft: omnisocials.Bool(false)`. Use it when an agent proposes a slot that a human should confirm. A draft is not allowed with `publish_now` or `ApprovalWorkflowID` (`400 validation_error`). On `Update`, `Draft` false without `ScheduledAt` is a `400 validation_error` when the draft has no time or its time is in the past (pass a new `ScheduledAt` then), and `Draft` true on a scheduled post unschedules it while keeping the time.
 
 ```go
@@ -124,6 +126,8 @@ _, err = client.Posts.Update(ctx, proposal.Data.ID, &omnisocials.PostUpdateParam
 ```
 
 ### Comment-to-DM automations
+
+> **Not yet released (coming in 0.10.0).** This section describes the next SDK release. The current release is 0.9.0.
 
 Answer a keyword in an Instagram comment with a DM, once per person, with an optional public reply under the comment. Set `CommentDMAutomation` on `Create` (Instagram must be in `Channels`) and the automation is bound to that post; it starts listening once the post is live. Needs the opt-in `automations:write` scope on the key. `client.Automations` manages the automations themselves (`List`, `Get`, `Create`, `Update`, `Delete`) and reads their activity (`ListEvents`, `automations:read`). On `Update`, a `*CommentDMAutomationInput` replaces the post's automation and `omnisocials.Null` removes it. Instagram rules: one private reply per comment, within 7 days; OmniSocials caps sends at 180 DMs an hour per account.
 
@@ -200,6 +204,38 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 	},
 })
 ```
+
+### Telegram channels and groups
+
+> **Not yet released.** Telegram comes with the next SDK release.
+
+`telegram` is a channel or group the workspace connected in OmniSocials; the OmniSocials bot posts to it. The `telegram` options: `silent`, `link_preview`, `pin`, `protect_content`, `spoiler` and `caption_above_media` (booleans), up to 3 `buttons` (`{ text, url }`, not on an album or a poll), a native `poll` (2 to 12 options of up to 100 characters, `open_period` 5 to 2628000 seconds, `multiple`; the post text is the question, max 300 characters, no media) and `first_comment` (a reply under the post). Text up to 4,096 characters; with media, text over 1,024 characters is sent as a reply under the media. Albums hold up to 10 photos and videos, files up to 50 MB, no Stories. Once sent, the post's `telegram.result` carries the message ids and the link. Telegram gives bots no view counts: analytics carry the reactions and the poll votes.
+
+```go
+_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:     "The new collection is live. Tap the button to shop.",
+	Channels:    []string{"telegram"},
+	ScheduledAt: "2026-11-02T09:00:00Z",
+	MediaURLs:   []string{"https://example.com/collection.jpg"},
+	Telegram: &omnisocials.TelegramPostOptions{
+		Silent:       omnisocials.Bool(true),
+		Pin:          omnisocials.Bool(true),
+		Buttons:      []omnisocials.TelegramButton{{Text: "Shop now", URL: "https://example.com/shop"}},
+		FirstComment: "Questions? Reply to this message.",
+	},
+})
+
+// A native poll: the text is the question.
+_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:  "Which day suits the live Q&A?",
+	Channels: []string{"telegram"},
+	Telegram: &omnisocials.TelegramPostOptions{
+		Poll: &omnisocials.TelegramPoll{Options: []string{"Tuesday", "Thursday", "Saturday"}, OpenPeriod: 86400},
+	},
+})
+```
+
+On update, `TelegramPostOptionsUpdate` merges into the stored options; `Poll: omnisocials.Null` removes the poll.
 
 ### Chained threads (X, Bluesky, Mastodon, Threads)
 
@@ -512,11 +548,17 @@ accountStats, err := client.Analytics.Accounts(ctx, &omnisocials.AccountAnalytic
 
 ### Best times to post
 
+The response is not wrapped in `data`. `platform`, `timezone`, `basis`, `grid` and `recommendations` sit at the top level.
+
 ```go
 best, err := client.Analytics.BestTimes(ctx, &omnisocials.BestTimesParams{
 	Platform: "instagram",
 	Timezone: "Europe/Amsterdam",
 })
+slots, _ := best["recommendations"].([]any)
+for _, slot := range slots {
+	fmt.Println(slot)
+}
 ```
 
 ## Locations (Instagram and Threads location tagging)
@@ -813,7 +855,7 @@ if err != nil {
 
 ## API scopes
 
-Each API key carries scopes: `posts:read`, `posts:write`, `media:write`, `accounts:read`, `analytics:read`, `webhooks:manage`, plus the opt-in `automations:read` / `automations:write` for comment-to-DM automations. A call with a missing scope returns a `*PermissionDeniedError` with code `insufficient_scope`.
+Each API key carries scopes: `posts:read`, `posts:write`, `media:write`, `accounts:read`, `analytics:read`, `webhooks:manage`, plus the opt-in `automations:read` / `automations:write` for comment-to-DM automations (not yet released in the SDK, coming in 0.10.0). A call with a missing scope returns a `*PermissionDeniedError` with code `insufficient_scope`.
 
 ## Documentation
 

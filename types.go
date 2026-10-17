@@ -218,6 +218,73 @@ type MastodonPostOptionsUpdate struct {
 	ThreadParts any `json:"thread_parts,omitempty"`
 }
 
+// TelegramButton is one link button under a Telegram post (one per row).
+type TelegramButton struct {
+	// Text is the label, 1 to 64 characters.
+	Text string `json:"text"`
+	// URL is an https://, http:// or tg:// link.
+	URL string `json:"url"`
+}
+
+// TelegramPoll is a native Telegram poll. The post text is the question
+// (max 300 characters); a poll carries no media and no buttons.
+type TelegramPoll struct {
+	// Options: 2 to 12 answers of up to 100 characters, all different.
+	Options []string `json:"options"`
+	// OpenPeriod is the number of seconds the poll stays open (5 to
+	// 2628000). 0 keeps it open until it is closed in Telegram.
+	OpenPeriod int `json:"open_period,omitempty"`
+	// Multiple allows several answers per person.
+	Multiple *bool `json:"multiple,omitempty"`
+}
+
+// TelegramPostOptions holds the Telegram options of a post: the channel or
+// group the workspace connected, posted by the OmniSocials bot. Text up to
+// 4,096 characters; with media, text over 1,024 characters is sent as a
+// reply under the media. Up to 10 photos and videos per album (a GIF goes on
+// its own), files up to 50 MB, no Stories.
+type TelegramPostOptions struct {
+	// Silent sends the post without a notification sound.
+	Silent *bool `json:"silent,omitempty"`
+	// LinkPreview false hides the link preview of a text-only post.
+	LinkPreview *bool `json:"link_preview,omitempty"`
+	// Pin pins the post in the chat. It needs the bot's Edit messages right
+	// in a channel (Pin messages in a group); without it the post is sent
+	// unpinned.
+	Pin *bool `json:"pin,omitempty"`
+	// ProtectContent stops forwarding and saving in Telegram apps.
+	ProtectContent *bool `json:"protect_content,omitempty"`
+	// Spoiler blurs the photos and videos until someone taps them.
+	Spoiler *bool `json:"spoiler,omitempty"`
+	// CaptionAboveMedia shows the text above the media.
+	CaptionAboveMedia *bool `json:"caption_above_media,omitempty"`
+	// Buttons: up to 3 link buttons. Not on an album (2+ media) or a poll.
+	Buttons []TelegramButton `json:"buttons,omitempty"`
+	// Poll is a native Telegram poll; see TelegramPoll.
+	Poll *TelegramPoll `json:"poll,omitempty"`
+	// FirstComment is a reply the bot sends under the post right after it
+	// is published (max 4,096 characters).
+	FirstComment string `json:"first_comment,omitempty"`
+}
+
+// TelegramPostOptionsUpdate is the update-side variant of
+// TelegramPostOptions. Every set field merges into the stored options; a
+// nil field is left untouched.
+type TelegramPostOptionsUpdate struct {
+	Silent            *bool `json:"silent,omitempty"`
+	LinkPreview       *bool `json:"link_preview,omitempty"`
+	Pin               *bool `json:"pin,omitempty"`
+	ProtectContent    *bool `json:"protect_content,omitempty"`
+	Spoiler           *bool `json:"spoiler,omitempty"`
+	CaptionAboveMedia *bool `json:"caption_above_media,omitempty"`
+	// Buttons: a []TelegramButton replaces them, omnisocials.Null removes them.
+	Buttons any `json:"buttons,omitempty"`
+	// Poll: a *TelegramPoll replaces it, omnisocials.Null removes it.
+	Poll any `json:"poll,omitempty"`
+	// FirstComment: a pointer to an empty string clears the first comment.
+	FirstComment *string `json:"first_comment,omitempty"`
+}
+
 // ThreadsLocationInput is the object form of a Threads location tag on a
 // post: the id plus optional display fields to store along with it. See
 // ThreadsPostOptions.Location.

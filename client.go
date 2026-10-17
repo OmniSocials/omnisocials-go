@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.10.0"
+const Version = "0.11.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -96,7 +96,7 @@ type Client struct {
 // Option configures a Client. Pass options to NewClient.
 type Option func(*Client)
 
-// WithAPIKey sets the API key (`omsk_live_*` / `omsk_test_*`). It takes
+// WithAPIKey sets the API key (`omsk_live_*`). It takes
 // precedence over the OMNISOCIALS_API_KEY environment variable.
 func WithAPIKey(apiKey string) Option {
 	return func(c *Client) { c.apiKey = apiKey }

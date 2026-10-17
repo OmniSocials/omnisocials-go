@@ -190,7 +190,8 @@ func (s *AnalyticsService) Accounts(ctx context.Context, params *AccountAnalytic
 
 // BestTimes calls `GET /analytics/best-times`: recommended posting time slots
 // for a platform, based on when the account's audience engages. Returned as a
-// map passthrough (`data` holds the platform, timezone, and scored slots).
+// map passthrough. The fields sit at the top level, with no `data` wrapper:
+// `platform`, `timezone`, `basis`, `grid`, and `recommendations`.
 func (s *AnalyticsService) BestTimes(ctx context.Context, params *BestTimesParams) (map[string]any, error) {
 	query := url.Values{}
 	if params != nil {

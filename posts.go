@@ -81,14 +81,16 @@ type PostCreateParams struct {
 	// back in the response's Warnings with Code "image_fit".
 	MediaFit map[string]string `json:"media_fit,omitempty"`
 	// CommentDMAutomation binds a comment-to-DM automation to this post
-	// (Instagram must be in Channels): a keyword in a comment is answered
-	// with a DM, once per person, with an optional public reply under the
-	// comment. Needs the automations:write scope on the key (403
-	// insufficient_scope, checked before anything else); a bad object is a
-	// 400 validation_error whose message starts with
-	// "comment_dm_automation: ". The response carries
-	// Data.CommentDMAutomation (with Post nil); it starts listening once the
-	// post is live on Instagram.
+	// (Instagram or Facebook must be in Channels): a keyword in a comment is
+	// answered with a DM, once per person, with an optional public reply
+	// under the comment. Its Platforms picks the channels (default:
+	// Instagram when the post goes there, else Facebook). Needs the
+	// automations:write scope on the key (403 insufficient_scope, checked
+	// before anything else); a bad object is a 400 validation_error whose
+	// message starts with "comment_dm_automation: ". The response carries
+	// Data.CommentDMAutomation (with Post nil, plus Platforms and
+	// Automations); each automation starts listening once the post is live
+	// on its channel.
 	CommentDMAutomation *CommentDMAutomationInput `json:"comment_dm_automation,omitempty"`
 	// VideoCover is the video thumbnail for a post whose media is one
 	// video: {"type": "frame", "thumb_offset": 3000} or {"type": "custom",
@@ -117,6 +119,8 @@ type PostCreateParams struct {
 	GoogleBusiness map[string]any       `json:"google_business,omitempty"`
 	// Telegram holds the Telegram options; see TelegramPostOptions.
 	Telegram *TelegramPostOptions `json:"telegram,omitempty"`
+	// Discord holds the Discord options; see DiscordPostOptions.
+	Discord *DiscordPostOptions `json:"discord,omitempty"`
 	// LinkedInPoll holds non-sponsored LinkedIn poll(s), independent per
 	// channel. Mutually exclusive with media and a link share on that
 	// channel's post - a poll takes priority over both at publish time.
@@ -143,8 +147,9 @@ type PostUpdateParams struct {
 	// the response's Warnings with Code "image_fit".
 	MediaFit map[string]string `json:"media_fit,omitempty"`
 	// CommentDMAutomation: leave nil to keep the post's comment-to-DM
-	// automation untouched, set a *CommentDMAutomationInput to replace it,
-	// or set omnisocials.Null to remove it. Needs the automations:write
+	// automations untouched, set a *CommentDMAutomationInput to replace them
+	// (a channel no longer in its Platforms loses its automation), or set
+	// omnisocials.Null to remove them all. Needs the automations:write
 	// scope.
 	CommentDMAutomation any      `json:"comment_dm_automation,omitempty"`
 	Channels            []string `json:"channels,omitempty"`
@@ -181,6 +186,11 @@ type PostUpdateParams struct {
 	// Telegram merges into the stored Telegram options; see
 	// TelegramPostOptionsUpdate.
 	Telegram *TelegramPostOptionsUpdate `json:"telegram,omitempty"`
+	// Discord: leave nil to keep the stored Discord options, set a
+	// *DiscordPostOptionsUpdate to merge into them (see
+	// DiscordPostOptionsUpdate), or set omnisocials.Null to remove every
+	// Discord option.
+	Discord any `json:"discord,omitempty"`
 	// LinkedInPoll replaces wholesale - send the full desired state for
 	// both channels. Leave nil to leave both channels' polls untouched, set
 	// a *LinkedInPolls to add/replace poll(s), or set a channel field to
@@ -280,12 +290,17 @@ type Post struct {
 	// "result" {chat_id, message_ids, pinned, pin_error, text_message_id,
 	// link_public, link_private, sent_at}.
 	Telegram map[string]any `json:"telegram,omitempty"`
+	// Discord echoes the Discord options and, once the post was sent,
+	// "result" {webhook_id, guild_id, channel_id, thread_id, message_id, url,
+	// sent_at, link_message_id, video_links, warnings (string codes)}.
+	Discord map[string]any `json:"discord,omitempty"`
 	// LinkedInPoll holds the non-sponsored LinkedIn poll(s) on this post,
 	// echoed back per channel when either is one.
 	LinkedInPoll *LinkedInPolls `json:"linkedin_poll,omitempty"`
 	// CommentDMAutomation is the comment-to-DM automation bound to this post
-	// (with Post nil) on a post that goes to Instagram; nil when it has none.
-	// Set on Posts.Get, and on the create / update response when the request
+	// (with Post nil, plus Platforms and Automations, one per channel) on a
+	// post that goes to Instagram or Facebook; nil when it has none. Set on
+	// Posts.Get, and on the create / update response when the request
 	// carried the field.
 	CommentDMAutomation *Automation `json:"comment_dm_automation,omitempty"`
 	// Errors maps platform -> user-friendly error message. Populated when

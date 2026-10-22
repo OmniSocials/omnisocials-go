@@ -36,7 +36,13 @@ type Account struct {
 	ReauthReason *string `json:"reauth_reason,omitempty"`
 	ConnectedAt  *string `json:"connected_at,omitempty"`
 	// Boards is only present for Pinterest accounts.
-	Boards          []AccountBoard `json:"boards,omitempty"`
+	Boards []AccountBoard `json:"boards,omitempty"`
+	// PlatformDetails holds platform specific fields. Telegram: chat_type,
+	// chat_id, subscribers, url. Discord: guild_id, guild_name (nil for a
+	// pasted webhook URL), channel_id, channel_name (nil when unknown),
+	// channel_type ("text", "voice", "announcement", "stage", "forum",
+	// "media" or nil), webhook_name, connect_method ("oauth" or "url") and
+	// url (discord.com/channels/<guild>/<channel>).
 	PlatformDetails map[string]any `json:"platform_details,omitempty"`
 }
 

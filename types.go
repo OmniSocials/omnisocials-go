@@ -285,6 +285,69 @@ type TelegramPostOptionsUpdate struct {
 	FirstComment *string `json:"first_comment,omitempty"`
 }
 
+// DiscordButton is one link button under a Discord post (all in one row).
+type DiscordButton struct {
+	// Text is the label, 1 to 80 characters.
+	Text string `json:"text"`
+	// URL is an https:// or http:// link.
+	URL string `json:"url"`
+}
+
+// DiscordPoll is a native Discord poll. The post text is the question (max
+// 300 characters); a poll carries no media and no buttons.
+type DiscordPoll struct {
+	// Options: 2 to 10 answers of up to 55 characters, all different.
+	Options []string `json:"options"`
+	// DurationHours is the number of hours the poll stays open (1 to 768).
+	// 0 sends none, so Discord's default of 24 hours applies.
+	DurationHours int `json:"duration_hours,omitempty"`
+	// Multiple allows several answers per person.
+	Multiple *bool `json:"multiple,omitempty"`
+}
+
+// DiscordPostOptions holds the Discord options of a post: one Discord
+// channel, posted through its incoming webhook (the message shows the
+// webhook's name and picture). Text up to 2,000 characters. Up to 10
+// images, GIFs and videos per message, mixed; a video or GIF over Discord's
+// 20 MB attachment limit is sent as a link in the text (an image over it is
+// re-encoded). No Stories; a Reel is one video message.
+type DiscordPostOptions struct {
+	// Silent sends the post without a push or desktop notification
+	// (Discord's @silent).
+	Silent *bool `json:"silent,omitempty"`
+	// LinkPreview false hides the previews (embeds) of links in the text.
+	LinkPreview *bool `json:"link_preview,omitempty"`
+	// AllowMentions true lets @everyone, @here, role and user mentions in the
+	// text ping. Off by default: mentions show as text and ping nobody.
+	AllowMentions *bool `json:"allow_mentions,omitempty"`
+	// Spoiler blurs every image and video until someone clicks it.
+	Spoiler *bool `json:"spoiler,omitempty"`
+	// ThreadName is the post title in a forum or media channel, where
+	// Discord requires one (1 to 100 characters). On a text channel the post
+	// goes out without it.
+	ThreadName string `json:"thread_name,omitempty"`
+	// Buttons: up to 5 link buttons in one row. Not with a poll.
+	Buttons []DiscordButton `json:"buttons,omitempty"`
+	// Poll is a native Discord poll; see DiscordPoll.
+	Poll *DiscordPoll `json:"poll,omitempty"`
+}
+
+// DiscordPostOptionsUpdate is the update-side variant of
+// DiscordPostOptions. Every set field merges into the stored options; a nil
+// field is left untouched.
+type DiscordPostOptionsUpdate struct {
+	Silent        *bool `json:"silent,omitempty"`
+	LinkPreview   *bool `json:"link_preview,omitempty"`
+	AllowMentions *bool `json:"allow_mentions,omitempty"`
+	Spoiler       *bool `json:"spoiler,omitempty"`
+	// ThreadName: a string replaces it, omnisocials.Null removes it.
+	ThreadName any `json:"thread_name,omitempty"`
+	// Buttons: a []DiscordButton replaces them, omnisocials.Null removes them.
+	Buttons any `json:"buttons,omitempty"`
+	// Poll: a *DiscordPoll replaces it, omnisocials.Null removes it.
+	Poll any `json:"poll,omitempty"`
+}
+
 // ThreadsLocationInput is the object form of a Threads location tag on a
 // post: the id plus optional display fields to store along with it. See
 // ThreadsPostOptions.Location.
@@ -360,11 +423,13 @@ type LinkedInPolls struct {
 
 // AutomationTrigger is the trigger block of an Automation.
 type AutomationTrigger struct {
-	// Kinds is one or more of "comment", "dm", "story_reply".
+	// Kinds is one or more of "comment", "dm", "story_reply". A Facebook
+	// Page has "comment" and "dm" only ("dm" = a keyword in a Messenger
+	// message to the Page); it has no story replies.
 	Kinds []string `json:"kinds"`
 	// Scope, for the comment kind: "post" (one post), "next_post" (the next
-	// Instagram post the workspace publishes) or "any" (every post). Nil when
-	// Kinds has no "comment".
+	// post the workspace publishes on the automation's channel) or "any"
+	// (every post). Nil when Kinds has no "comment".
 	Scope    *string  `json:"scope,omitempty"`
 	Keywords []string `json:"keywords"`
 	// Match is "word" (whole word), "contains" (anywhere in the text) or
@@ -377,8 +442,8 @@ type AutomationTrigger struct {
 type AutomationTriggerInput struct {
 	// Kinds defaults to ["comment"].
 	Kinds []string `json:"kinds,omitempty"`
-	// Scope defaults to "post"; "next_post" = the next Instagram post the
-	// workspace publishes, "any" = every post.
+	// Scope defaults to "post"; "next_post" = the next post the workspace
+	// publishes on the automation's channel, "any" = every post.
 	Scope string `json:"scope,omitempty"`
 	// Keywords: up to 20, 60 characters each. Required unless Match is "any".
 	Keywords []string `json:"keywords,omitempty"`
@@ -426,8 +491,8 @@ type AutomationStats struct {
 
 // AutomationPost is the post an automation listens on, as a snapshot.
 type AutomationPost struct {
-	// Source is "omnisocials" (a post made here) or "instagram" (a post
-	// published outside OmniSocials).
+	// Source is "omnisocials" (a post made here), "instagram" or "facebook"
+	// (a post published outside OmniSocials, read from that platform).
 	Source       string  `json:"source"`
 	ID           string  `json:"id"`
 	Caption      *string `json:"caption,omitempty"`
@@ -436,7 +501,7 @@ type AutomationPost struct {
 	// MediaType is "POST", "REEL", "IMAGE", "VIDEO" or "CAROUSEL_ALBUM".
 	MediaType *string `json:"media_type,omitempty"`
 	// Status, PostDateTime and Live are set for the "omnisocials" source
-	// only; Live is true once the post is live on Instagram.
+	// only; Live is true once the post is live on the automation's channel.
 	Status       string  `json:"status,omitempty"`
 	PostDateTime *string `json:"post_date_time,omitempty"`
 	Live         *bool   `json:"live,omitempty"`
@@ -444,12 +509,16 @@ type AutomationPost struct {
 
 // Automation is a comment-to-DM automation: a keyword in an Instagram
 // comment (or a DM, or a story reply) is answered with a DM, once per
-// person, with an optional public reply under the comment. Instagram rules:
-// one private reply per comment, within 7 days; OmniSocials caps sends at
-// 180 DMs an hour per account.
+// person, with an optional public reply under the comment. On a Facebook
+// Page a keyword in a comment (or a Messenger message to the Page) is
+// answered with a DM in Messenger; a Page has no story replies. Meta rules,
+// the same on both: one private reply per comment, within 7 days;
+// OmniSocials caps sends at 180 DMs an hour per account and platform.
 type Automation struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Platform is "instagram" or "facebook" (a Facebook Page). Set at
+	// create; it never changes.
 	Platform string `json:"platform"`
 	// Status is "active", "paused" or "completed".
 	Status string  `json:"status"`
@@ -457,8 +526,12 @@ type Automation struct {
 	// PostID is the OmniSocials post it listens on; nil when none.
 	PostID *string `json:"post_id,omitempty"`
 	// InstagramMediaID is the Instagram media id it listens on; set once the
-	// post is live.
+	// post is live. Nil for a Facebook automation.
 	InstagramMediaID *string `json:"instagram_media_id,omitempty"`
+	// FacebookPostID is the Facebook Page post id it listens on
+	// ("{page-id}_{post-id}"); set once the post is live. Nil for an
+	// Instagram automation.
+	FacebookPostID *string `json:"facebook_post_id,omitempty"`
 	// Post is a snapshot of that post; nil for scope "next_post" or "any".
 	Post      *AutomationPost   `json:"post,omitempty"`
 	Trigger   AutomationTrigger `json:"trigger"`
@@ -467,9 +540,28 @@ type Automation struct {
 	Stats     AutomationStats   `json:"stats"`
 	CreatedAt string            `json:"created_at,omitempty"`
 	UpdatedAt string            `json:"updated_at,omitempty"`
+	// Platforms is set on Post.CommentDMAutomation only: the channels with an
+	// automation on that post, e.g. ["instagram", "facebook"]. The other
+	// fields are those of the first one (Instagram first).
+	Platforms []string `json:"platforms,omitempty"`
+	// Automations is set on Post.CommentDMAutomation only: one entry per
+	// channel.
+	Automations []AutomationSummary `json:"automations,omitempty"`
 }
 
-// AutomationEventPerson is the person an AutomationEvent is about.
+// AutomationSummary is one entry of Automation.Automations: the automation
+// of one channel on a post.
+type AutomationSummary struct {
+	ID string `json:"id"`
+	// Platform is "instagram" or "facebook".
+	Platform string `json:"platform"`
+	// Status is "active", "paused" or "completed".
+	Status string `json:"status"`
+}
+
+// AutomationEventPerson is the person an AutomationEvent is about. On
+// Facebook ID is the person's id as the Page sees it and Username is their
+// name (Facebook has no @handle).
 type AutomationEventPerson struct {
 	ID       string  `json:"id"`
 	Username *string `json:"username,omitempty"`
@@ -516,16 +608,27 @@ type AutomationEventsResponse struct {
 
 // AutomationCreateParams is the request body for Automations.Create.
 type AutomationCreateParams struct {
+	// Platform is "instagram" (default) or "facebook" (a Facebook Page; the
+	// DM lands in Messenger). FacebookPostID implies "facebook". Facebook
+	// has no story replies: "story_reply" in Trigger.Kinds is a 400
+	// validation_error.
+	Platform string `json:"platform,omitempty"`
 	// Name, max 120 characters.
 	Name string `json:"name,omitempty"`
-	// PostID, for scope "post": an OmniSocials post that goes to Instagram
-	// (scheduled or live). One automation per post. Pass PostID OR
-	// InstagramMediaID, not both.
+	// PostID, for scope "post": an OmniSocials post that goes to the
+	// automation's channel (scheduled or live). One automation per post and
+	// platform: a post that goes to Instagram and Facebook can have one of
+	// each. Pass at most one of PostID, InstagramMediaID and FacebookPostID.
 	PostID string `json:"post_id,omitempty"`
-	// InstagramMediaID, for scope "post": a post published outside
-	// OmniSocials (numeric Instagram media id).
-	InstagramMediaID string                  `json:"instagram_media_id,omitempty"`
-	Trigger          *AutomationTriggerInput `json:"trigger,omitempty"`
+	// InstagramMediaID, for scope "post": an Instagram post published
+	// outside OmniSocials (numeric Instagram media id).
+	InstagramMediaID string `json:"instagram_media_id,omitempty"`
+	// FacebookPostID, for scope "post": a post published on the Facebook
+	// Page outside OmniSocials, as "{page-id}_{post-id}" or the post id
+	// alone (the Page id is put in front). Implies Platform "facebook". A
+	// post of another Page is a 404 facebook_post_not_found.
+	FacebookPostID string                  `json:"facebook_post_id,omitempty"`
+	Trigger        *AutomationTriggerInput `json:"trigger,omitempty"`
 	// Actions is required; Actions.DM.Text is the DM to send.
 	Actions AutomationActions `json:"actions"`
 	Limits  *AutomationLimits `json:"limits,omitempty"`
@@ -536,10 +639,16 @@ type AutomationCreateParams struct {
 // AutomationUpdateParams is the request body for Automations.Update. Only
 // set fields are sent; a body with nothing is a 400 no_fields.
 type AutomationUpdateParams struct {
-	Name string `json:"name,omitempty"`
-	// PostID / InstagramMediaID move the automation to that post.
+	// Platform cannot change: another platform (or InstagramMediaID on a
+	// Facebook automation, FacebookPostID on an Instagram one) is a 400
+	// platform_immutable.
+	Platform string `json:"platform,omitempty"`
+	Name     string `json:"name,omitempty"`
+	// PostID / InstagramMediaID / FacebookPostID move the automation to
+	// that post.
 	PostID           string `json:"post_id,omitempty"`
 	InstagramMediaID string `json:"instagram_media_id,omitempty"`
+	FacebookPostID   string `json:"facebook_post_id,omitempty"`
 	// Trigger is merged into the stored trigger: fields you leave out keep
 	// their value, so new Keywords keep the kinds, the scope and the match.
 	Trigger *AutomationTriggerInput `json:"trigger,omitempty"`
@@ -560,6 +669,8 @@ type AutomationUpdateParams struct {
 type AutomationListParams struct {
 	// Status is "active", "paused" or "completed".
 	Status string
+	// Platform is "instagram" or "facebook": only that channel's automations.
+	Platform string
 	// PostID returns only the automation bound to this OmniSocials post.
 	PostID string
 }
@@ -586,12 +697,20 @@ type CommentDMAutomationTrigger struct {
 // CommentDMAutomationInput is PostCreateParams.CommentDMAutomation and
 // PostUpdateParams.CommentDMAutomation: the comment-to-DM automation bound to
 // that post (the Automations.Create body without post_id,
-// instagram_media_id, scope, kinds, name and status; Instagram must be one
-// of the post's channels). Needs the automations:write scope on the key.
+// instagram_media_id, facebook_post_id, platform, scope, kinds, name and
+// status, plus Platforms; Instagram or Facebook must be one of the post's
+// channels). Needs the automations:write scope on the key.
 type CommentDMAutomationInput struct {
 	Trigger *CommentDMAutomationTrigger `json:"trigger,omitempty"`
 	Actions AutomationActions           `json:"actions"`
 	Limits  *AutomationLimits           `json:"limits,omitempty"`
+	// Platforms are the channels that get the automation ("instagram",
+	// "facebook"): one automation per listed channel, each with the same
+	// keywords, DM, public reply and limits. Each one must be a channel of
+	// the post (else 400 validation_error). Leave it nil for Instagram when
+	// the post goes there, else Facebook. On update a channel left out loses
+	// its automation.
+	Platforms []string `json:"platforms,omitempty"`
 }
 
 // ---- Misc shared types --------------------------------------------------------

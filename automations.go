@@ -9,8 +9,10 @@ import (
 // AutomationsService covers the /automations endpoints: comment-to-DM
 // automations. An automation answers a keyword in an Instagram comment (or a
 // DM, or a story reply) with a DM, once per person, with an optional public
-// reply under the comment. Instagram rules: one private reply per comment,
-// within 7 days; OmniSocials caps sends at 180 DMs an hour per account. The
+// reply under the comment. On a Facebook Page it answers a keyword in a
+// comment (or a Messenger message to the Page) in Messenger; a Page has no
+// story replies. Meta rules: one private reply per comment, within 7 days;
+// OmniSocials caps sends at 180 DMs an hour per account and platform. The
 // scopes are opt-in on the API key: automations:read for List, Get and
 // ListEvents, automations:write for Create, Update and Delete (and for
 // PostCreateParams.CommentDMAutomation).
@@ -19,14 +21,18 @@ type AutomationsService struct {
 }
 
 // List calls `GET /automations`: the workspace's comment-to-DM automations,
-// optionally filtered by Status ("active", "paused", "completed") or by the
-// OmniSocials PostID they are bound to. A nil params value lists them all.
-// Requires the automations:read scope.
+// optionally filtered by Status ("active", "paused", "completed"), by
+// Platform ("instagram", "facebook") or by the OmniSocials PostID they are
+// bound to. A nil params value lists them all. Requires the
+// automations:read scope.
 func (s *AutomationsService) List(ctx context.Context, params *AutomationListParams) (*ListResponse[Automation], error) {
 	query := url.Values{}
 	if params != nil {
 		if params.Status != "" {
 			query.Set("status", params.Status)
+		}
+		if params.Platform != "" {
+			query.Set("platform", params.Platform)
 		}
 		if params.PostID != "" {
 			query.Set("post_id", params.PostID)
@@ -49,16 +55,20 @@ func (s *AutomationsService) Get(ctx context.Context, id string) (*ItemResponse[
 	return &out, nil
 }
 
-// Create calls `POST /automations`: create a comment-to-DM automation. Bind
-// it to one post with PostID (an OmniSocials post that goes to Instagram,
-// scheduled or live; one automation per post) or InstagramMediaID (a post
-// published outside OmniSocials), not both; a Trigger with Scope "next_post"
-// or "any" needs neither. Actions.DM.Text is required. Requires the
-// automations:write scope. Errors: 400 validation_error, 400
-// post_not_instagram, 400 post_required, 404 post_not_found, 404
-// instagram_media_not_found, 409 instagram_not_connected, 409
-// instagram_needs_reauth, 409 automation_exists (the error body also carries
-// automation_id).
+// Create calls `POST /automations`: create a comment-to-DM automation.
+// Platform "facebook" runs it on a Facebook Page (the DM lands in
+// Messenger). Bind it to one post with PostID (an OmniSocials post that goes
+// to the channel, scheduled or live; one automation per post and platform),
+// InstagramMediaID (an Instagram post published outside OmniSocials) or
+// FacebookPostID (a Page post published outside OmniSocials; implies
+// "facebook"), at most one; a Trigger with Scope "next_post" or "any" needs
+// none. Actions.DM.Text is required. Requires the automations:write scope.
+// Errors: 400 validation_error, 400 post_not_instagram, 400
+// post_not_facebook, 400 post_required, 404 post_not_found, 404
+// instagram_media_not_found, 404 facebook_post_not_found, 409
+// instagram_not_connected, 409 instagram_needs_reauth, 409
+// facebook_not_connected, 409 facebook_needs_reauth, 409 automation_exists
+// (the error body also carries automation_id).
 func (s *AutomationsService) Create(ctx context.Context, params *AutomationCreateParams) (*ItemResponse[Automation], error) {
 	var out ItemResponse[Automation]
 	if err := s.client.post(ctx, "/automations", jsonBody(params), &out); err != nil {
@@ -74,10 +84,11 @@ func (s *AutomationsService) Create(ctx context.Context, params *AutomationCreat
 // StopAt keeps MaxSends. PublicReply.Enabled omnisocials.Bool(false) turns
 // the public reply off; a Limits map with "max_sends": omnisocials.Null
 // removes that limit (see AutomationUpdateParams.Limits). Status "paused"
-// pauses and "active" resumes; another PostID / InstagramMediaID moves the
-// automation to that post. A "completed" automation starts again when its
-// limits or trigger change. Requires the automations:write scope. 400
-// no_fields when the body is empty.
+// pauses and "active" resumes; another PostID / InstagramMediaID /
+// FacebookPostID moves the automation to that post. The platform cannot
+// change (400 platform_immutable). A "completed" automation starts again
+// when its limits or trigger change. Requires the automations:write scope.
+// 400 no_fields when the body is empty.
 func (s *AutomationsService) Update(ctx context.Context, id string, params *AutomationUpdateParams) (*ItemResponse[Automation], error) {
 	var out ItemResponse[Automation]
 	if err := s.client.patch(ctx, "/automations/"+url.PathEscape(id), jsonBody(params), &out); err != nil {

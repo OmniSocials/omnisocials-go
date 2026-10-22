@@ -676,6 +676,88 @@ func TestPostCommentDMAutomationSerializes(t *testing.T) {
 	}
 }
 
+func TestAutomationsFacebook(t *testing.T) {
+	var gotMethod, gotQuery, gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotMethod, gotQuery, gotBody = r.Method, r.URL.RawQuery, string(data)
+		item := `{"id":"100000005","type":"comment_to_dm","platform":"facebook","status":"active","name":null,
+			"post_id":null,"instagram_media_id":null,"facebook_post_id":"111_222",
+			"post":{"source":"facebook","id":"111_222","caption":"Comment GUIDE","thumbnail_url":null,"permalink":null,"media_type":null},
+			"trigger":{"kinds":["comment"],"scope":"post","keywords":["guide"],"match":"word"},
+			"actions":{"dm":{"text":"Here is the guide"}},"limits":{"max_sends":null,"stop_at":null},
+			"stats":{"matched":0,"sent":0,"skipped":0,"failed":0,"last_event_at":null},"created_at":"c","updated_at":"u"}`
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, `{"data":[`+item+`]}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":`+item+`}`)
+	}))
+
+	list, err := client.Automations.List(context.Background(), &AutomationListParams{Platform: "facebook"})
+	if err != nil {
+		t.Fatalf("Automations.List: %v", err)
+	}
+	if gotMethod != http.MethodGet || gotQuery != "platform=facebook" {
+		t.Fatalf("expected GET with platform=facebook, got %s %q", gotMethod, gotQuery)
+	}
+	if len(list.Data) != 1 || list.Data[0].Platform != "facebook" || list.Data[0].InstagramMediaID != nil ||
+		list.Data[0].FacebookPostID == nil || *list.Data[0].FacebookPostID != "111_222" ||
+		list.Data[0].Post == nil || list.Data[0].Post.Source != "facebook" {
+		t.Fatalf("unexpected Facebook automation: %+v", list.Data)
+	}
+
+	if _, err := client.Automations.Create(context.Background(), &AutomationCreateParams{
+		Platform:       "facebook",
+		FacebookPostID: "111_222",
+		Trigger:        &AutomationTriggerInput{Keywords: []string{"guide"}},
+		Actions:        AutomationActions{DM: AutomationDM{Text: "Here is the guide"}},
+	}); err != nil {
+		t.Fatalf("Automations.Create: %v", err)
+	}
+	if !strings.Contains(gotBody, `"platform":"facebook"`) || !strings.Contains(gotBody, `"facebook_post_id":"111_222"`) ||
+		strings.Contains(gotBody, "instagram_media_id") {
+		t.Fatalf("unexpected create body %s", gotBody)
+	}
+}
+
+func TestPostCommentDMAutomationPlatforms(t *testing.T) {
+	var gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		fmt.Fprint(w, `{"data":{"id":"9","status":"scheduled","comment_dm_automation":{"id":"100000004",
+			"type":"comment_to_dm","platform":"instagram","status":"active","name":null,"post_id":"9",
+			"instagram_media_id":null,"facebook_post_id":null,"post":null,
+			"trigger":{"kinds":["comment"],"scope":"post","keywords":["guide"],"match":"word"},
+			"actions":{"dm":{"text":"Here is the guide"}},"limits":{"max_sends":null,"stop_at":null},
+			"stats":{"matched":0,"sent":0,"skipped":0,"failed":0,"last_event_at":null},"created_at":"c","updated_at":"u",
+			"platforms":["instagram","facebook"],
+			"automations":[{"id":"100000004","platform":"instagram","status":"active"},{"id":"100000005","platform":"facebook","status":"active"}]}}}`)
+	}))
+
+	res, err := client.Posts.Create(context.Background(), &PostCreateParams{
+		Content:  "Comment GUIDE",
+		Channels: []string{"instagram", "facebook"},
+		CommentDMAutomation: &CommentDMAutomationInput{
+			Trigger:   &CommentDMAutomationTrigger{Keywords: []string{"guide"}},
+			Actions:   AutomationActions{DM: AutomationDM{Text: "Here is the guide"}},
+			Platforms: []string{"instagram", "facebook"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Posts.Create: %v", err)
+	}
+	if !strings.Contains(gotBody, `"platforms":["instagram","facebook"]`) {
+		t.Fatalf("expected platforms in the body, got %s", gotBody)
+	}
+	auto := res.Data.CommentDMAutomation
+	if auto == nil || len(auto.Platforms) != 2 || auto.Platforms[1] != "facebook" ||
+		len(auto.Automations) != 2 || auto.Automations[1].ID != "100000005" || auto.Automations[1].Platform != "facebook" {
+		t.Fatalf("unexpected automations on the post: %+v", auto)
+	}
+}
+
 func TestAllServiceMethodsExist(t *testing.T) {
 	client, err := NewClient(WithAPIKey("omsk_test_key"))
 	if err != nil {

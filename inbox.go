@@ -299,9 +299,9 @@ func (s *InboxService) MarkRead(ctx context.Context, conversationID string) (*In
 // per-send fee), debited before the send and automatically refunded if the
 // send fails. Two 402 *APIError codes are specific to X: "insufficient_credits"
 // (the balance can't cover the 2 credits) and "x_inbox_suspended" (the
-// workspace's X inbox auto-suspended when the balance hit zero; top up and
-// re-enable X DMs in the dashboard to resume — DMs that arrived while
-// suspended are not recovered). Neither code is one of the SDK's typed error
+// workspace's X inbox auto-suspended when the balance hit zero; a top-up
+// turns X DMs back on by themselves, but DMs that arrived while suspended
+// are not recovered). Neither code is one of the SDK's typed error
 // subclasses, so match them with errors.As against *APIError and check Code.
 //
 // Threads replies publish as native Threads replies. The Threads inbox needs

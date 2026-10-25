@@ -155,9 +155,11 @@ for _, event := range events.Data {
 }
 ```
 
-The events response is `Data`, `Counts` and `Pagination`, not the plain list: `Counts` is the number of events per outcome (`sent`, `skipped`, `failed`, `pending`). An automation can also listen on a post published outside OmniSocials (`client.Automations.Create` with `InstagramMediaID`), on the next post the workspace publishes (`Trigger: &omnisocials.AutomationTriggerInput{Scope: "next_post"}`) or on every post (`Scope: "any"`), and on DMs and story replies (`Kinds: []string{"dm", "story_reply"}`).
+The events response is `Data`, `Counts` and `Pagination`, not the plain list: `Counts` is the number of events per outcome (`sent`, `skipped`, `failed`, `pending`, `queued`, `opted_out`). An automation can also listen on a post published outside OmniSocials (`client.Automations.Create` with `InstagramMediaID`), on the next post the workspace publishes (`Trigger: &omnisocials.AutomationTriggerInput{Scope: "next_post"}`) or on every post (`Scope: "any"`), and on DMs and story replies (`Kinds: []string{"dm", "story_reply"}`).
 
 A Facebook Page works the same way, and the DM lands in Messenger: set `Platform: "facebook"` on `AutomationCreateParams`, or `FacebookPostID` for a Page post published outside OmniSocials. On a post, `CommentDMAutomationInput{Platforms: []string{"instagram", "facebook"}, ...}` makes one automation per channel with the same keywords and DM. Facebook has no story replies.
+
+On X, set `Platform: "x"` with `Trigger: &omnisocials.AutomationTriggerInput{Kinds: []string{"dm"}, Keywords: []string{"guide"}}`: the X account answers a keyword in a DM, once per person, and every answer ends with "Reply STOP to stop automatic messages." An active X automation needs X DMs on for the workspace (`409 x_dms_off`; `Status: "paused"` always saves). An answer over the send cap waits in a queue (`queued`) for up to an hour.
 
 ### Publish immediately
 
@@ -823,7 +825,7 @@ if errors.As(err, &apiErr) {
 	case "insufficient_credits":
 		log.Println("balance can't cover the 2-credit send")
 	case "x_inbox_suspended":
-		log.Println("workspace's X inbox is suspended, top up and re-enable in the dashboard")
+		log.Println("workspace's X inbox is suspended until a top-up")
 	}
 }
 ```

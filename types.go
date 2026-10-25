@@ -425,7 +425,8 @@ type LinkedInPolls struct {
 type AutomationTrigger struct {
 	// Kinds is one or more of "comment", "dm", "story_reply". A Facebook
 	// Page has "comment" and "dm" only ("dm" = a keyword in a Messenger
-	// message to the Page); it has no story replies.
+	// message to the Page); it has no story replies. An X automation has
+	// "dm" only (a keyword in a DM to the X account).
 	Kinds []string `json:"kinds"`
 	// Scope, for the comment kind: "post" (one post), "next_post" (the next
 	// post the workspace publishes on the automation's channel) or "any"
@@ -440,7 +441,8 @@ type AutomationTrigger struct {
 // AutomationTriggerInput is the trigger block for Automations.Create and
 // Automations.Update.
 type AutomationTriggerInput struct {
-	// Kinds defaults to ["comment"].
+	// Kinds defaults to ["comment"]. On X pass ["dm"], the only kind there
+	// ("comment" or "story_reply" on X is a 400 validation_error).
 	Kinds []string `json:"kinds,omitempty"`
 	// Scope defaults to "post"; "next_post" = the next post the workspace
 	// publishes on the automation's channel, "any" = every post.
@@ -513,12 +515,17 @@ type AutomationPost struct {
 // Page a keyword in a comment (or a Messenger message to the Page) is
 // answered with a DM in Messenger; a Page has no story replies. Meta rules,
 // the same on both: one private reply per comment, within 7 days;
-// OmniSocials caps sends at 180 DMs an hour per account and platform.
+// OmniSocials caps sends at 180 DMs an hour per account and platform. On X
+// a keyword in a DM to the X account is answered with a DM (no post, no
+// public reply); every X answer ends with "Reply STOP to stop automatic
+// messages." and a person who replies STOP gets no automatic DM from the
+// account again; X caps sends at 15 per 15 minutes and 450 a day. An answer
+// over a cap waits in a queue (outcome "queued") for up to an hour.
 type Automation struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
-	// Platform is "instagram" or "facebook" (a Facebook Page). Set at
-	// create; it never changes.
+	// Platform is "instagram", "facebook" (a Facebook Page) or "x" (the X
+	// account). Set at create; it never changes.
 	Platform string `json:"platform"`
 	// Status is "active", "paused" or "completed".
 	Status string  `json:"status"`
@@ -561,7 +568,7 @@ type AutomationSummary struct {
 
 // AutomationEventPerson is the person an AutomationEvent is about. On
 // Facebook ID is the person's id as the Page sees it and Username is their
-// name (Facebook has no @handle).
+// name (Facebook has no @handle); on Instagram and X Username is the handle.
 type AutomationEventPerson struct {
 	ID       string  `json:"id"`
 	Username *string `json:"username,omitempty"`
@@ -574,11 +581,19 @@ type AutomationEvent struct {
 	AutomationID string `json:"automation_id"`
 	// Kind is what the person did: "comment", "dm" or "story_reply".
 	Kind string `json:"kind"`
-	// Outcome is "sent", "skipped", "failed" or "pending".
+	// Outcome is "sent", "skipped", "failed", "pending", "queued" (the
+	// answer waits for a free slot under the send cap and goes out within
+	// the hour) or "opted_out" (the person replied STOP on X).
 	Outcome string `json:"outcome"`
 	// Reason: for "skipped" one of "already_sent", "limit_reached",
-	// "stopped", "window_passed", "rate_limited"; for "failed" the
-	// platform's error text.
+	// "stopped", "window_passed", "rate_limited" (the send cap stayed full
+	// for an hour), "cannot_message" (a Page made the comment, or the
+	// person's settings block messages), "already_replied",
+	// "dm_window_passed", "dms_closed" (X: the person does not accept DMs
+	// from the account), "no_credits" (X DMs had no credits for the
+	// answer), "opted_out" (the person replied STOP before),
+	// "automation_off" (paused or finished while the answer waited); for
+	// "failed" the platform's error text.
 	Reason *string `json:"reason,omitempty"`
 	// ReasonLabel is Reason in plain words.
 	ReasonLabel *string                `json:"reason_label,omitempty"`
@@ -608,10 +623,12 @@ type AutomationEventsResponse struct {
 
 // AutomationCreateParams is the request body for Automations.Create.
 type AutomationCreateParams struct {
-	// Platform is "instagram" (default) or "facebook" (a Facebook Page; the
-	// DM lands in Messenger). FacebookPostID implies "facebook". Facebook
+	// Platform is "instagram" (default), "facebook" (a Facebook Page; the
+	// DM lands in Messenger) or "x" (the X account: Trigger.Kinds ["dm"]
+	// only, no post fields). FacebookPostID implies "facebook". Facebook
 	// has no story replies: "story_reply" in Trigger.Kinds is a 400
-	// validation_error.
+	// validation_error. An active X automation needs X DMs on for the
+	// workspace (409 x_dms_off; Status "paused" always saves).
 	Platform string `json:"platform,omitempty"`
 	// Name, max 120 characters.
 	Name string `json:"name,omitempty"`
@@ -661,7 +678,8 @@ type AutomationUpdateParams struct {
 	// omnisocials.Null, e.g. map[string]any{"max_sends": omnisocials.Null}
 	// (a nil pointer field is omitted, so it cannot express the null).
 	Limits any `json:"limits,omitempty"`
-	// Status "paused" pauses, "active" resumes.
+	// Status "paused" pauses, "active" resumes (an X automation only while
+	// X DMs are on for the workspace, else 409 x_dms_off).
 	Status string `json:"status,omitempty"`
 }
 
@@ -669,7 +687,8 @@ type AutomationUpdateParams struct {
 type AutomationListParams struct {
 	// Status is "active", "paused" or "completed".
 	Status string
-	// Platform is "instagram" or "facebook": only that channel's automations.
+	// Platform is "instagram", "facebook" or "x": only that channel's
+	// automations.
 	Platform string
 	// PostID returns only the automation bound to this OmniSocials post.
 	PostID string
@@ -677,7 +696,8 @@ type AutomationListParams struct {
 
 // AutomationEventListParams filters Automations.ListEvents.
 type AutomationEventListParams struct {
-	// Outcome is "sent", "skipped", "failed" or "pending".
+	// Outcome is "sent", "skipped", "failed", "pending", "queued" or
+	// "opted_out".
 	Outcome string
 	// Limit is 1 to 100 (default 25).
 	Limit int

@@ -377,6 +377,11 @@ type ThreadsPostOptions struct {
 	// Location is an alternative to LocationID: store display fields along
 	// with the id. LocationID wins when both are set.
 	Location *ThreadsLocationInput `json:"location,omitempty"`
+	// TopicTag is the topic of the post on Threads (one per post), e.g.
+	// "Build in public". Unlike a #tag in the text it can hold spaces. 1 to
+	// 50 characters, no period and no ampersand; a leading "#" is dropped.
+	// On a multi-post thread the topic goes on part 1.
+	TopicTag string `json:"topic_tag,omitempty"`
 }
 
 // ThreadsPostOptionsUpdate is the update-side variant of ThreadsPostOptions.
@@ -395,6 +400,9 @@ type ThreadsPostOptionsUpdate struct {
 	// *ThreadsLocationInput to (re)tag with display fields, or set
 	// omnisocials.Null to clear. LocationID wins when both are set.
 	Location any `json:"location,omitempty"`
+	// TopicTag: leave nil to keep the existing topic untouched, set a string
+	// to replace it, or set omnisocials.Null to remove it.
+	TopicTag any `json:"topic_tag,omitempty"`
 }
 
 // ---- LinkedIn poll -----------------------------------------------------------

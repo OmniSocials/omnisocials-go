@@ -270,7 +270,7 @@ type Post struct {
 	// Per-platform options echoed back in the request shape (X, Bluesky,
 	// Mastodon, and Threads include thread_parts; Threads includes a
 	// "location" object {id, name, address, city, country} when a location
-	// tag is set; comment-capable platforms include first_comment /
+	// tag is set and "topic_tag" when a topic is set; comment-capable platforms include first_comment /
 	// first_comment_result; Pinterest includes product_tags and, on a
 	// published post that had tags, the read-only product_tags_result
 	// {requested, tagged, skipped: [{pin_id, reason}], error}).

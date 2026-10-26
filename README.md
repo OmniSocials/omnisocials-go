@@ -309,6 +309,8 @@ _, err = client.Posts.Update(ctx, postID, &omnisocials.PostUpdateParams{
 
 Threads posts can also carry a location tag: set `Threads.LocationID`, a Threads location id from `client.Locations.SearchThreads` (Instagram Place ids are not interchangeable). On a multi-part thread the tag lands on part 1; on update, set `LocationID: omnisocials.Null` to clear it. Threads location tagging is currently rolling out; until Meta approves the permissions it is disabled on production and calls return a clear error.
 
+Threads posts can carry a topic too: set `Threads.TopicTag`, for example `"Build in public"`. Unlike a #tag in the text, a topic can hold spaces. 1 to 50 characters, no period and no ampersand; a leading `#` is dropped. On a multi-part thread the topic lands on part 1; on update, set `TopicTag: omnisocials.Null` to remove it.
+
 ### X link posts use credits
 
 X bills API posts whose text contains a URL at a premium, and OmniSocials passes that fee through as prepaid credits (20 credits per URL-containing tweet; threads billed per part with a link). When a create targets X and the text contains a URL, the response's `Warnings` field carries a `PostWarning` with code `x_url_post_credits`:

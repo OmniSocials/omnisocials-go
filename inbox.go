@@ -108,6 +108,13 @@ type InboxMessage struct {
 	// on the platform (see Hide), false when it is not. nil (JSON null) for
 	// DMs, which have no notion of hidden.
 	Hidden *bool `json:"hidden,omitempty"`
+	// Liked is set on Facebook, LinkedIn Page and TikTok comments: true when
+	// the connected account liked the comment (see Like), false when it did
+	// not. On Facebook and LinkedIn it reflects likes made through
+	// OmniSocials; TikTok also syncs likes made in the TikTok app. nil (JSON
+	// null) where the platform has no like through OmniSocials (DMs,
+	// Instagram, YouTube, X, Threads).
+	Liked *bool `json:"liked,omitempty"`
 	// Permalink is a link to the reply or mentioning post on the platform,
 	// when known.
 	Permalink *string `json:"permalink,omitempty"`
@@ -380,6 +387,37 @@ func (s *InboxService) Hide(ctx context.Context, messageID string, hide bool) (*
 	return &out, nil
 }
 
+// InboxLikeParams is the request body for Inbox.Like.
+type InboxLikeParams struct {
+	// Like likes the comment when true and removes the like when false.
+	Like bool `json:"like"`
+}
+
+// Like calls `POST /inbox/messages/:messageId/like`: like or unlike a comment
+// someone left on one of your posts, as the connected Page or account.
+// Facebook Page, LinkedIn Page and TikTok comments (incoming comments only).
+// like=true likes, like=false removes the like. Facebook allows only Like (no
+// Love or other reactions). Liking a comment that is already liked, or
+// unliking one that is not, succeeds. Returns the comment after the change,
+// with Liked set. Requires the inbox:write scope. The id is URL-encoded for
+// you.
+//
+// *APIError codes: 400 "unsupported_platform" (not an incoming Facebook,
+// LinkedIn or TikTok comment), 401 "reauth_required" (the TikTok comments
+// authorization is missing or expired, or the LinkedIn Page connection expired), 403 "reconnect_required" (the account
+// was connected without the permission to like comments; reconnect it in the
+// dashboard), 404 "not_found" (message not in this workspace) or
+// "account_not_connected", 502 "platform_error" (the platform rejected the
+// call).
+func (s *InboxService) Like(ctx context.Context, messageID string, like bool) (*ItemResponse[InboxMessage], error) {
+	params := &InboxLikeParams{Like: like}
+	var out ItemResponse[InboxMessage]
+	if err := s.client.post(ctx, "/inbox/messages/"+url.PathEscape(messageID)+"/like", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // InboxDeletedMessage is the Data of the Inbox.DeleteMessage response.
 type InboxDeletedMessage struct {
 	// ID is the deleted message id.
@@ -453,7 +491,7 @@ type InboxReplyWindow struct {
 type InboxNextUnanswered struct {
 	Conversation InboxConversation `json:"conversation"`
 	// Message is the unanswered incoming message itself: the customer's
-	// latest DM, or the specific comment. Its ID is what Hide and
+	// latest DM, or the specific comment. Its ID is what Hide, Like and
 	// DeleteMessage take, and the MessageID to set on Reply for comment
 	// threads (so the reply lands under this comment, not under the newest
 	// one on the post); its ConversationID is what Reply takes.

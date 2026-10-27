@@ -780,6 +780,11 @@ fmt.Println(reply.Data.ID, reply.Data.Direction)
 // TikTok, YouTube, Threads). false unhides.
 _, err = client.Inbox.Hide(ctx, thread.Data[0].ID, true)
 
+// Like a comment as the Page or account (Facebook, LinkedIn Page, TikTok).
+// false unlikes. The returned message carries Liked.
+liked, err := client.Inbox.Like(ctx, thread.Data[0].ID, true)
+fmt.Println(*liked.Data.Liked) // true
+
 // Delete a comment outright (Facebook, Instagram, TikTok; YouTube: hide instead).
 // Replies under it go with it; their ids come back as RemovedReplyIDs.
 deleted, err := client.Inbox.DeleteMessage(ctx, thread.Data[0].ID)

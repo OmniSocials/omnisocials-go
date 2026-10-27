@@ -808,3 +808,33 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxLikePostsTheLikeFlag(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotMethod, gotPath, gotBody = r.Method, r.URL.EscapedPath(), string(data)
+		fmt.Fprint(w, `{"data":{"id":"123","conversation_id":"fb_comment_1","platform":"facebook","type":"comment",
+			"direction":"incoming","text":"Nice","timestamp":"t","is_read":true,"is_replied":false,
+			"reaction":null,"parent_comment_id":null,"hidden":false,"liked":true,"permalink":null,
+			"attachment":null,"sender":{"id":"1","username":"a","name":"A","profile_picture":null},"post":null}}`)
+	}))
+
+	res, err := client.Inbox.Like(context.Background(), "123", true)
+	if err != nil {
+		t.Fatalf("Inbox.Like: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/inbox/messages/123/like" || gotBody != `{"like":true}` {
+		t.Fatalf("unexpected request %s %s %s", gotMethod, gotPath, gotBody)
+	}
+	if res.Data.Liked == nil || !*res.Data.Liked {
+		t.Fatalf("expected Liked true, got %+v", res.Data.Liked)
+	}
+
+	if _, err := client.Inbox.Like(context.Background(), "123", false); err != nil {
+		t.Fatalf("Inbox.Like(false): %v", err)
+	}
+	if gotBody != `{"like":false}` {
+		t.Fatalf("unlike must send like false, got %s", gotBody)
+	}
+}

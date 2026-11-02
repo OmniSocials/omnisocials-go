@@ -539,6 +539,51 @@ _, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
 })
 ```
 
+## Post tags
+
+Tags are your own labels for posts, such as a hook style or a format, to filter and compare posts in Analytics. They never go to a platform. Uses the `posts:read` / `posts:write` scopes (`Analytics.Tags` needs `analytics:read`).
+
+```go
+tag, err := client.Tags.Create(ctx, &omnisocials.TagCreateParams{Name: "Question hook", Color: "blue"}) // Color is optional
+tags, err := client.Tags.List(ctx)
+_, err = client.Tags.Update(ctx, tag.Data.ID, &omnisocials.TagUpdateParams{Name: "Question"})
+deleted, err := client.Tags.Delete(ctx, tag.Data.ID) // takes it off every post; posts stay
+fmt.Println(deleted.Data.PostsUntagged)
+
+// Tag a post at create time: tag ids or names; a new name becomes a tag (at most 20 per post)
+_, err = client.Posts.Create(ctx, &omnisocials.PostCreateParams{
+	Content:  "Would you post this?",
+	Channels: []string{"tiktok"},
+	Tags:     []any{"Question", 14},
+})
+
+// Replace a post's tags; omnisocials.Null removes them all. Works on published posts too.
+_, err = client.Posts.Update(ctx, "post_id", &omnisocials.PostUpdateParams{Tags: []any{"Question"}})
+
+// Up to 500 posts at once: Add, Remove, or Set (replaces; []any{} removes every tag)
+res, err := client.Tags.Apply(ctx, &omnisocials.TagApplyParams{
+	PostIDs: []string{"1024", "1025"},
+	Add:     []any{"Question"},
+})
+fmt.Println(res.Data.Updated, res.Data.NotFound)
+
+// Filter: a tag id or name, comma separated for any of several
+posts, err := client.Posts.List(ctx, &omnisocials.PostListParams{Tag: "Question"})
+overview, err := client.Analytics.Overview(ctx, &omnisocials.AnalyticsOverviewParams{Period: "30d", Tag: "Question"})
+
+// Compare tags against your normal (default: the last 90 days)
+cmp, err := client.Analytics.Tags(ctx, &omnisocials.TagAnalyticsParams{StartDate: "2026-08-01", Platform: "tiktok"})
+for _, row := range cmp.Data.Tags {
+	if row.VsNormal != nil {
+		fmt.Printf("%s: %+.0f%% vs normal (enough posts: %v)\n", row.Tag.Name, *row.VsNormal*100, row.EnoughPosts)
+	}
+}
+```
+
+`VsNormal` is a fraction (0.38 = 38% above your normal): each post is measured against the median impressions of its own channel in the period. Read it as a hint only when `EnoughPosts` is false. Every `Post` carries `Tags` and `TrialReel` (`{Strategy: "MANUAL" | "SS_PERFORMANCE"}` on an Instagram Trial Reel, else nil), and so does every `Analytics.Posts` entry.
+
+Errors: `404 tag_not_found`; `409 tag_exists` (the existing tag is in the error body under `error.tag`), `tag_limit_reached` (200 tags per workspace); `400 invalid_tag_name` (1 to 40 characters), `invalid_tag_color`, `invalid_tags`, `invalid_post_ids`, `too_many_posts`, `too_many_tags`.
+
 ## Accounts
 
 ```go

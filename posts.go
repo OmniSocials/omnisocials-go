@@ -55,6 +55,10 @@ type PostCreateParams struct {
 	HashtagPlacement string `json:"hashtag_placement,omitempty"`
 	// HashtagPlatforms restricts the hashtags to a subset of Channels.
 	HashtagPlatforms []string `json:"hashtag_platforms,omitempty"`
+	// Tags are the post's tags: tag ids (int, int64) or names (string). A
+	// name matches case-insensitively; a name that does not exist yet becomes
+	// a new tag of the workspace. At most 20. Tags never go to a platform.
+	Tags []any `json:"tags,omitempty"`
 	// ApprovalWorkflowID routes the post through a saved approval workflow
 	// (see ApprovalWorkflows.List). The post is created as "in_approval"
 	// (approval_status "pending") instead of "scheduled"; its approvers are
@@ -151,8 +155,13 @@ type PostUpdateParams struct {
 	// (a channel no longer in its Platforms loses its automation), or set
 	// omnisocials.Null to remove them all. Needs the automations:write
 	// scope.
-	CommentDMAutomation any      `json:"comment_dm_automation,omitempty"`
-	Channels            []string `json:"channels,omitempty"`
+	CommentDMAutomation any `json:"comment_dm_automation,omitempty"`
+	// Tags: leave nil to keep the post's tags, set a []any of tag ids or
+	// names to replace them (a new name becomes a tag), or set
+	// omnisocials.Null (or []any{}) to remove them all. An update that sets
+	// only Tags works on every post, published and failed ones included.
+	Tags     any      `json:"tags,omitempty"`
+	Channels []string `json:"channels,omitempty"`
 	// MediaIDs / MediaURLs: same shapes as PostCreateParams, including
 	// MediaIDEntry / MediaURLEntry values for per-media alt text.
 	MediaIDs      any       `json:"media_ids,omitempty"`
@@ -209,6 +218,10 @@ type PostListParams struct {
 	Limit int
 	// Offset is the number of items to skip (default 0).
 	Offset int
+	// Tag keeps posts with this tag: a tag id or name. Comma separate
+	// several to match posts with any of them. An unknown tag answers 404
+	// tag_not_found.
+	Tag string
 }
 
 // RecentPlatformPostsParams filters Posts.RecentPlatform.
@@ -235,6 +248,11 @@ type Post struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
 	Type   string `json:"type,omitempty"`
+	// Tags are the post's tags (see Tags).
+	Tags []Tag `json:"tags,omitempty"`
+	// TrialReel is set when the post is an Instagram Trial Reel, nil
+	// otherwise.
+	TrialReel *TrialReel `json:"trial_reel,omitempty"`
 	// Content is either a plain string or a per-platform map (decoded as
 	// map[string]any) with a "default" key.
 	Content any `json:"content"`
@@ -472,6 +490,9 @@ func (s *PostsService) List(ctx context.Context, params *PostListParams) (*ListR
 		}
 		if params.Offset > 0 {
 			query.Set("offset", strconv.Itoa(params.Offset))
+		}
+		if params.Tag != "" {
+			query.Set("tag", params.Tag)
 		}
 	}
 	var out ListResponse[Post]

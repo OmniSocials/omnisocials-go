@@ -38,6 +38,11 @@ type PostAnalyticsStorySlide struct {
 type PostAnalytics struct {
 	PostID    string                                `json:"post_id"`
 	Platforms map[string]PostAnalyticsPlatformEntry `json:"platforms"`
+	// TrialReel is set on Analytics.Posts entries when the post went to
+	// Instagram as a Trial Reel: compare trial reels with normal reels.
+	TrialReel *TrialReel `json:"trial_reel,omitempty"`
+	// Tags are the post's tags (Analytics.Posts entries).
+	Tags []Tag `json:"tags,omitempty"`
 }
 
 // PostAnalyticsBatchResponse is the Analytics.Posts response.
@@ -90,6 +95,10 @@ type AnalyticsOverviewParams struct {
 	// EndDate is an ISO date (YYYY-MM-DD); use with StartDate instead of
 	// Period.
 	EndDate string
+	// Tag keeps the post numbers of the posts with this tag: a tag id or
+	// name, comma separated for any of several. Account numbers stay those
+	// of the whole account. An unknown tag answers 404 tag_not_found.
+	Tag string
 }
 
 // AccountAnalyticsEntry is one account-level stats snapshot.
@@ -160,6 +169,9 @@ func (s *AnalyticsService) Overview(ctx context.Context, params *AnalyticsOvervi
 		}
 		if params.EndDate != "" {
 			query.Set("end_date", params.EndDate)
+		}
+		if params.Tag != "" {
+			query.Set("tag", params.Tag)
 		}
 	}
 	var out AnalyticsOverviewResponse

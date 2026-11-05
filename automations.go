@@ -69,8 +69,12 @@ func (s *AutomationsService) Get(ctx context.Context, id string) (*ItemResponse[
 // InstagramMediaID (an Instagram post published outside OmniSocials) or
 // FacebookPostID (a Page post published outside OmniSocials; implies
 // "facebook"), at most one; a Trigger with Scope "next_post" or "any" needs
-// none. Actions.DM.Text is required. Requires the automations:write scope.
-// Errors: 400 validation_error, 400 post_not_instagram, 400
+// none. Actions.DM.Text is required. Actions.FollowGate (Instagram only)
+// sends the link only to people who follow the account; a person who has
+// not followed yet is an event with Outcome "waiting". Requires the
+// automations:write scope.
+// Errors: 400 validation_error, 400 follow_gate_instagram_only, 400
+// post_not_instagram, 400
 // post_not_facebook, 400 post_required, 404 post_not_found, 404
 // instagram_media_not_found, 404 facebook_post_not_found, 409
 // instagram_not_connected, 409 instagram_needs_reauth, 409
@@ -90,7 +94,8 @@ func (s *AutomationsService) Create(ctx context.Context, params *AutomationCreat
 // out keep their value: new Trigger.Keywords keep the kinds, the scope and
 // the match; a new Actions.DM.Text keeps the public reply; Limits with only
 // StopAt keeps MaxSends. PublicReply.Enabled omnisocials.Bool(false) turns
-// the public reply off; a Limits map with "max_sends": omnisocials.Null
+// the public reply off; FollowGate.Enabled omnisocials.Bool(false) turns
+// Follow first off and keeps its texts; a Limits map with "max_sends": omnisocials.Null
 // removes that limit (see AutomationUpdateParams.Limits). Status "paused"
 // pauses and "active" resumes; another PostID / InstagramMediaID /
 // FacebookPostID moves the automation to that post. The platform cannot
@@ -115,7 +120,8 @@ func (s *AutomationsService) Delete(ctx context.Context, id string) error {
 
 // ListEvents calls `GET /automations/:id/events`: the automation's activity,
 // one event per person it answered, skipped or failed on. Filter by Outcome
-// ("sent", "skipped", "failed", "pending", "queued", "opted_out"); Limit is
+// ("sent", "skipped", "failed", "pending", "queued", "opted_out",
+// "waiting"); Limit is
 // 1 to 100 (default 25),
 // Offset skips. A nil params value uses the defaults. Requires the
 // automations:read scope.

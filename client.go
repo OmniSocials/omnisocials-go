@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.14.0"
+const Version = "0.15.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -89,11 +89,22 @@ type Client struct {
 	// Automations covers /automations: comment-to-DM automations (list,
 	// get, create, update, delete, events).
 	Automations *AutomationsService
+	// Ads covers /ads: ad accounts, boosts, campaigns, "Create an ad"
+	// drafts (Ads.Drafts), the overview, boost suggestions and keyword
+	// research. Calls that start or raise ad spend are not retried after a
+	// 5xx or a connection error.
+	Ads *AdsService
 	// Webhooks covers /webhooks: endpoint management + secret rotation.
 	Webhooks *WebhooksService
 	// Inbox covers /inbox: social inbox conversations, messages, mark-read,
 	// and reply.
 	Inbox *InboxService
+	// Limits covers /limits: what OmniSocials cannot do, why, and what to
+	// do instead.
+	Limits *LimitsService
+	// FeatureRequests covers /feature-requests: send a feature request for
+	// the person who owns the key, and read their requests back.
+	FeatureRequests *FeatureRequestsService
 }
 
 // Option configures a Client. Pass options to NewClient.
@@ -119,7 +130,8 @@ func WithTimeout(timeout time.Duration) Option {
 }
 
 // WithMaxRetries sets how many times a failed request is retried on 429, 5xx,
-// and connection errors (default 2, i.e. up to 3 attempts total).
+// and connection errors (default 2, i.e. up to 3 attempts total). A call that
+// can start or raise ad spend is retried on a 429 only.
 func WithMaxRetries(maxRetries int) Option {
 	return func(c *Client) {
 		if maxRetries < 0 {
@@ -180,8 +192,11 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Audio = &AudioService{client: c}
 	c.Pinterest = &PinterestService{client: c}
 	c.Automations = &AutomationsService{client: c}
+	c.Ads = &AdsService{client: c, Drafts: &AdDraftsService{client: c}}
 	c.Webhooks = &WebhooksService{client: c}
 	c.Inbox = &InboxService{client: c}
+	c.Limits = &LimitsService{client: c}
+	c.FeatureRequests = &FeatureRequestsService{client: c}
 	return c, nil
 }
 
@@ -196,6 +211,18 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 
 // ---- HTTP verb helpers used by the services -------------------------------
 
+// retryPolicy says which failures the request loop may send again.
+type retryPolicy int
+
+const (
+	// retryAll retries a 429, a 5xx and a connection error (the default).
+	retryAll retryPolicy = iota
+	// retryRateLimit retries a 429 only. A call that can start or raise ad
+	// spend uses it: after a 5xx or a timeout the first attempt may have
+	// gone through.
+	retryRateLimit
+)
+
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {
 	return c.do(ctx, http.MethodGet, path, query, nil, "", out)
 }
@@ -208,11 +235,20 @@ func (c *Client) patch(ctx context.Context, path string, body, out any) error {
 	return c.doJSON(ctx, http.MethodPatch, path, body, out)
 }
 
+func (c *Client) put(ctx context.Context, path string, body, out any) error {
+	return c.doJSON(ctx, http.MethodPut, path, body, out)
+}
+
 func (c *Client) del(ctx context.Context, path string) error {
 	return c.do(ctx, http.MethodDelete, path, nil, nil, "", nil)
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, body, out any) error {
+	return c.doJSONWith(ctx, method, path, body, out, retryAll)
+}
+
+// doJSONWith is doJSON with an explicit retry policy.
+func (c *Client) doJSONWith(ctx context.Context, method, path string, body, out any, retry retryPolicy) error {
 	var data []byte
 	var contentType string
 	if body != nil {
@@ -223,7 +259,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body, out any)
 		}
 		contentType = "application/json"
 	}
-	return c.do(ctx, method, path, nil, data, contentType, out)
+	return c.doWith(ctx, method, path, nil, data, contentType, out, retry)
 }
 
 // apiResponse is a fully-read HTTP response.
@@ -239,6 +275,12 @@ type apiResponse struct {
 // response body is decoded into out as-is (the API's `{ data, ... }` envelope
 // is preserved); 204 / empty bodies leave out untouched.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body []byte, contentType string, out any) error {
+	return c.doWith(ctx, method, path, query, body, contentType, out, retryAll)
+}
+
+// doWith is do with an explicit retry policy: retryRateLimit sends the
+// request again after a 429 only, never after a 5xx or a connection error.
+func (c *Client) doWith(ctx context.Context, method, path string, query url.Values, body []byte, contentType string, out any, retry retryPolicy) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -255,8 +297,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		resp, err := c.send(ctx, method, endpoint, body, contentType)
 		if err != nil {
 			// Network failure or per-attempt timeout: retryable, unless the
-			// caller's own context is done.
-			if ctx.Err() == nil && attempt < c.maxRetries {
+			// caller's own context is done or the call may have started ad
+			// spend.
+			if retry == retryAll && ctx.Err() == nil && attempt < c.maxRetries {
 				if sleepErr := sleepContext(ctx, c.backoff(attempt, 0, false)); sleepErr == nil {
 					continue
 				}
@@ -284,7 +327,8 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 
 		retryAfter, hasRetryAfter := parseRetryAfter(resp.header.Get("Retry-After"))
-		if (resp.status == http.StatusTooManyRequests || resp.status >= 500) && attempt < c.maxRetries {
+		retryable := resp.status == http.StatusTooManyRequests || (resp.status >= 500 && retry == retryAll)
+		if retryable && attempt < c.maxRetries {
 			if sleepErr := sleepContext(ctx, c.backoff(attempt, retryAfter, hasRetryAfter)); sleepErr != nil {
 				return &ConnectionError{Message: "request canceled while waiting to retry: " + sleepErr.Error(), Err: sleepErr}
 			}

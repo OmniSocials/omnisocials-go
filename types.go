@@ -474,11 +474,45 @@ type AutomationPublicReply struct {
 	Variations []string `json:"variations,omitempty"`
 }
 
+// FollowGateMessage is one message of Follow first: its Text (max 640
+// characters) and the title of its one Button (max 20 characters). On input
+// an empty Text or Button is the default.
+type FollowGateMessage struct {
+	Text   string `json:"text,omitempty"`
+	Button string `json:"button,omitempty"`
+}
+
+// AutomationFollowGate is Follow first (Instagram only): the link DM
+// (Actions.DM.Text) goes out only to people who follow the account. A comment
+// gets FirstMessage as the private reply, with one button; a tap makes
+// OmniSocials ask Instagram whether the person follows. A follower gets the
+// link; anyone else gets NotFollowing with its button, and every later tap
+// checks again. A DM or a story reply is checked at once. When Instagram
+// gives no answer the link goes out anyway, marked not checked.
+//
+// In a response the texts are filled in with the defaults (FirstMessage
+// "Tap the button and I'll send you the link 👇" / "Send me the link",
+// NotFollowing "Almost there! Follow us first, then tap the button again." /
+// "I follow now"), and Automation.Actions.FollowGate is nil on Facebook and X
+// automations. On input every field is optional. Enabled
+// omnisocials.Bool(true) on a Facebook or X automation is a 400
+// follow_gate_instagram_only; a Text over 640 characters or a Button over 20
+// is a 400 validation_error.
+type AutomationFollowGate struct {
+	Enabled      *bool              `json:"enabled,omitempty"`
+	FirstMessage *FollowGateMessage `json:"first_message,omitempty"`
+	NotFollowing *FollowGateMessage `json:"not_following,omitempty"`
+}
+
 // AutomationActions is the actions block of an Automation, also sent on
 // create / update and inside CommentDMAutomationInput.
 type AutomationActions struct {
 	DM          AutomationDM           `json:"dm"`
 	PublicReply *AutomationPublicReply `json:"public_reply,omitempty"`
+	// FollowGate is Follow first (Instagram only). In CommentDMAutomationInput
+	// with Platforms ["instagram", "facebook"] it applies to the Instagram
+	// automation; the Facebook one sends at once.
+	FollowGate *AutomationFollowGate `json:"follow_gate,omitempty"`
 }
 
 // AutomationLimits is the limits block of an Automation, also sent on create
@@ -490,12 +524,14 @@ type AutomationLimits struct {
 	StopAt *string `json:"stop_at,omitempty"`
 }
 
-// AutomationStats are the counters of an Automation.
+// AutomationStats are the counters of an Automation. Followed counts the
+// people who followed after the Follow first ask, then got the link.
 type AutomationStats struct {
 	Matched     int     `json:"matched"`
 	Sent        int     `json:"sent"`
 	Skipped     int     `json:"skipped"`
 	Failed      int     `json:"failed"`
+	Followed    int     `json:"followed"`
 	LastEventAt *string `json:"last_event_at,omitempty"`
 }
 
@@ -591,7 +627,8 @@ type AutomationEvent struct {
 	Kind string `json:"kind"`
 	// Outcome is "sent", "skipped", "failed", "pending", "queued" (the
 	// answer waits for a free slot under the send cap and goes out within
-	// the hour) or "opted_out" (the person replied STOP on X).
+	// the hour), "opted_out" (the person replied STOP on X) or "waiting"
+	// (Follow first: asked to follow, the link goes out after the follow).
 	Outcome string `json:"outcome"`
 	// Reason: for "skipped" one of "already_sent", "limit_reached",
 	// "stopped", "window_passed", "rate_limited" (the send cap stayed full
@@ -600,8 +637,9 @@ type AutomationEvent struct {
 	// "dm_window_passed", "dms_closed" (X: the person does not accept DMs
 	// from the account), "no_credits" (X DMs had no credits for the
 	// answer), "opted_out" (the person replied STOP before),
-	// "automation_off" (paused or finished while the answer waited); for
-	// "failed" the platform's error text.
+	// "automation_off" (paused or finished while the answer waited),
+	// "already_waiting" (Follow first: a second comment from a person who
+	// was already asked to follow); for "failed" the platform's error text.
 	Reason *string `json:"reason,omitempty"`
 	// ReasonLabel is Reason in plain words.
 	ReasonLabel *string                `json:"reason_label,omitempty"`
@@ -615,8 +653,31 @@ type AutomationEvent struct {
 	Message           *string `json:"message,omitempty"`
 	PublicReply       *string `json:"public_reply,omitempty"`
 	PlatformMessageID *string `json:"platform_message_id,omitempty"`
-	CreatedAt         string  `json:"created_at,omitempty"`
-	SentAt            *string `json:"sent_at,omitempty"`
+	// FollowGate is where this person is in Follow first; nil when the
+	// automation had no follow ask for them.
+	FollowGate *AutomationEventFollowGate `json:"follow_gate,omitempty"`
+	CreatedAt  string                     `json:"created_at,omitempty"`
+	SentAt     *string                    `json:"sent_at,omitempty"`
+}
+
+// AutomationEventFollowGate is AutomationEvent.FollowGate.
+type AutomationEventFollowGate struct {
+	// State is "waiting" (asked to follow, no link yet) or "done" (the link
+	// went out).
+	State *string `json:"state,omitempty"`
+	// AskedAt is when the follow ask went out (ISO 8601).
+	AskedAt *string `json:"asked_at,omitempty"`
+	// Taps counts the button taps. After 10 "not yet" answers the person's
+	// taps get no answer.
+	Taps int `json:"taps"`
+	// Followed is true when a confirmed follower got the link, nil when the
+	// link went out unchecked (Instagram gave no answer).
+	Followed *bool `json:"followed,omitempty"`
+	// Checked is true when Instagram answered the follow check.
+	Checked bool `json:"checked"`
+	// AfterAsk is true when the person followed after the ask; false with
+	// Followed true means they already followed.
+	AfterAsk bool `json:"after_ask"`
 }
 
 // AutomationEventsResponse is the Automations.ListEvents response. Note the
@@ -679,7 +740,9 @@ type AutomationUpdateParams struct {
 	Trigger *AutomationTriggerInput `json:"trigger,omitempty"`
 	// Actions is merged into the stored actions: a new DM.Text keeps the
 	// public reply. PublicReply with Enabled omnisocials.Bool(false) turns
-	// the public reply off.
+	// the public reply off. FollowGate merges too: Enabled
+	// omnisocials.Bool(false) turns Follow first off and keeps its texts,
+	// new texts keep the switch, and a nil FollowGate keeps the stored one.
 	Actions *AutomationActions `json:"actions,omitempty"`
 	// Limits is merged into the stored limits: a *AutomationLimits with only
 	// StopAt keeps MaxSends. To remove a limit send a map[string]any with
@@ -704,8 +767,8 @@ type AutomationListParams struct {
 
 // AutomationEventListParams filters Automations.ListEvents.
 type AutomationEventListParams struct {
-	// Outcome is "sent", "skipped", "failed", "pending", "queued" or
-	// "opted_out".
+	// Outcome is "sent", "skipped", "failed", "pending", "queued",
+	// "opted_out" or "waiting".
 	Outcome string
 	// Limit is 1 to 100 (default 25).
 	Limit int

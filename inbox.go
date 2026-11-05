@@ -429,7 +429,8 @@ type InboxDeletedMessage struct {
 }
 
 // DeleteMessage calls `DELETE /inbox/messages/:messageId`: delete a comment
-// someone left on one of your posts, on the platform and from the inbox.
+// on one of your posts, on the platform and from the inbox: a comment someone
+// left, or one of your own replies (Direction "outgoing").
 // Facebook, Instagram and TikTok comments only: YouTube's API does not let a
 // channel delete other people's comments, hide those instead (see Hide).
 // Replies under the deleted comment go with it (the platforms cascade the

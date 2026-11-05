@@ -218,6 +218,13 @@ type PostListParams struct {
 	Limit int
 	// Offset is the number of items to skip (default 0).
 	Offset int
+	// StartDate keeps posts whose schedule_at is on or after this moment (for
+	// a post sent at once: when it was sent). "YYYY-MM-DD" (that UTC day),
+	// "YYYY-MM" (the whole month) or an ISO 8601 datetime.
+	StartDate string
+	// EndDate keeps posts whose schedule_at is on or before this moment
+	// (inclusive). Same formats as StartDate.
+	EndDate string
 	// Tag keeps posts with this tag: a tag id or name. Comma separate
 	// several to match posts with any of them. An unknown tag answers 404
 	// tag_not_found.
@@ -478,7 +485,8 @@ type RecentPlatformPostsResponse struct {
 	CurrentDate string         `json:"current_date,omitempty"`
 }
 
-// List calls `GET /posts`: posts in the workspace, newest first.
+// List calls `GET /posts`: posts in the workspace, newest first. With
+// StartDate or EndDate the posts come in calendar order (earliest first).
 func (s *PostsService) List(ctx context.Context, params *PostListParams) (*ListResponse[Post], error) {
 	query := url.Values{}
 	if params != nil {
@@ -490,6 +498,12 @@ func (s *PostsService) List(ctx context.Context, params *PostListParams) (*ListR
 		}
 		if params.Offset > 0 {
 			query.Set("offset", strconv.Itoa(params.Offset))
+		}
+		if params.StartDate != "" {
+			query.Set("start_date", params.StartDate)
+		}
+		if params.EndDate != "" {
+			query.Set("end_date", params.EndDate)
 		}
 		if params.Tag != "" {
 			query.Set("tag", params.Tag)

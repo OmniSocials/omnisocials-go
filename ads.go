@@ -1,0 +1,1042 @@
+package omnisocials
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+)
+
+// AdsService covers the /ads endpoints: boost a published post or create a
+// new ad on Meta, Pinterest, TikTok, LinkedIn, X and Google.
+//
+// Ads spend real money once a campaign starts. Boosts, campaigns and drafts
+// are created as drafts (no spend). Activate, ActivateMulti, Drafts.Launch
+// and a budget raise through Update start or raise spend, and each needs the
+// amount again as a confirmation. Show the person the amount and get their
+// yes first. These calls and Resume are not retried after a 5xx or a
+// connection error (only a 429 is), because the first attempt may have
+// started the ad: read the campaign or the draft to see what happened.
+//
+// Budgets are in major currency units (10 = 10 EUR) in the ad account's
+// currency. Ad accounts are connected and picked in the OmniSocials
+// dashboard. The scopes are opt-in on the API key (the "Ads" switch):
+// ads:read for the reads, ads:write for the rest. A key without them gets a
+// 403 insufficient_scope.
+type AdsService struct {
+	client *Client
+
+	// Drafts covers /ads/drafts: "Create an ad" drafts, one campaign per
+	// network with the same ads. A draft never spends; Drafts.Launch starts
+	// it.
+	Drafts *AdDraftsService
+}
+
+// AdDraftsService covers the /ads/drafts endpoints. Reach it through
+// client.Ads.Drafts.
+type AdDraftsService struct {
+	client *Client
+}
+
+// ---- Ids ---------------------------------------------------------------------
+
+// AdID is the id of an ad campaign or an ad account. The API sends it as a
+// number or as a numeric string; both decode. It encodes as a JSON number.
+type AdID int64
+
+// UnmarshalJSON reads a number or a numeric string. A JSON null leaves the
+// id unchanged.
+func (id *AdID) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("omnisocials: ad id %s is not a number", data)
+	}
+	v, err := n.Int64()
+	if err != nil {
+		return fmt.Errorf("omnisocials: ad id %s is not a number", data)
+	}
+	*id = AdID(v)
+	return nil
+}
+
+// String returns the id in decimal.
+func (id AdID) String() string {
+	return strconv.FormatInt(int64(id), 10)
+}
+
+// ---- Shared shapes -------------------------------------------------------------
+
+// AdBudget is a campaign budget. Amount is in MAJOR currency units (10 = 10
+// EUR); network minimums apply (for example TikTok 20 a day). Currency is
+// the 3-letter ISO code and must match the ad account's currency.
+type AdBudget struct {
+	// Type is "daily" (default) or "lifetime" (the whole schedule). A draft
+	// budget is always daily: leave Type empty there.
+	Type     string  `json:"type,omitempty"`
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+// AdSchedule is when a campaign runs (ISO 8601 datetimes).
+type AdSchedule struct {
+	StartAt string `json:"start_at,omitempty"`
+	EndAt   string `json:"end_at,omitempty"`
+}
+
+// AdCreative holds the network-specific creative fields of a boost.
+// TikTok (Spark Ads) needs SparkAuthCode: the post owner makes it in the
+// TikTok app (video, "...", Ad settings, Ad authorization). Google (Demand
+// Gen, YouTube videos) needs Headlines, Descriptions and LogoURL. Meta,
+// Pinterest, X and LinkedIn boosts need none.
+type AdCreative struct {
+	SparkAuthCode string `json:"spark_auth_code,omitempty"`
+	// Headlines: Google, 1 to 5 of up to 40 characters.
+	Headlines []string `json:"headlines,omitempty"`
+	// Descriptions: Google, 1 to 5 of up to 90 characters.
+	Descriptions []string `json:"descriptions,omitempty"`
+	// LogoURL: Google, a square logo picture.
+	LogoURL       string   `json:"logo_url,omitempty"`
+	LongHeadlines []string `json:"long_headlines,omitempty"`
+	BusinessName  string   `json:"business_name,omitempty"`
+	// Link: TikTok traffic boosts, the website the button opens (required
+	// there).
+	Link           string `json:"link,omitempty"`
+	LandingPageURL string `json:"landing_page_url,omitempty"`
+}
+
+// ---- Ad accounts -----------------------------------------------------------------
+
+// AdAccountInfo is the display info of an ad account, from the network.
+type AdAccountInfo struct {
+	Name string `json:"name,omitempty"`
+	// Currency is the billing currency; campaign budgets must use it.
+	Currency string `json:"currency,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
+	// BillingOK is false when no payment method is set on the network; the
+	// ads do not run until the person adds one in the network's Ads
+	// Manager. Nil when the network does not say.
+	BillingOK *bool `json:"billing_ok,omitempty"`
+}
+
+// AdAccount is a connected ad account (Ads.ListAccounts).
+type AdAccount struct {
+	// ID is the OmniSocials ad account id (use it as AdAccountID).
+	ID AdID `json:"id"`
+	// Platform is "meta", "pinterest", "tiktok", "linkedin", "x" or
+	// "google".
+	Platform string `json:"platform"`
+	// ExternalAccountID is the network's own ad account id (Meta act_...).
+	ExternalAccountID string         `json:"external_account_id"`
+	AccountInfo       *AdAccountInfo `json:"account_info,omitempty"`
+	// IsSelected reports whether a person picked this account for spending
+	// in the dashboard. Only selected accounts can run campaigns.
+	IsSelected  bool   `json:"is_selected"`
+	Status      string `json:"status"`
+	NeedsReauth bool   `json:"needs_reauth,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// AdAccountsResponse is the Ads.ListAccounts response.
+type AdAccountsResponse struct {
+	Data []AdAccount `json:"data"`
+	// PlatformsAvailable are the ads networks this server supports.
+	PlatformsAvailable []string `json:"platforms_available,omitempty"`
+}
+
+// ---- Campaigns ---------------------------------------------------------------------
+
+// AdCampaign is an ad campaign or a boost.
+type AdCampaign struct {
+	ID       AdID   `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	// CampaignType is "campaign" or "boost".
+	CampaignType string `json:"campaign_type"`
+	// Objective is "engagement", "traffic", "awareness", "video_views",
+	// "lead_generation" or "conversions".
+	Objective string `json:"objective,omitempty"`
+	// Status is "draft", "pending_review" (in the network's ad review),
+	// "active", "rejected", "paused", "completed" or "error". A campaign is
+	// created as "draft" and spends only after activation.
+	Status string    `json:"status"`
+	Budget *AdBudget `json:"budget,omitempty"`
+	// AdAccountID is the ad account it runs on; nil on a draft without one.
+	AdAccountID *AdID `json:"ad_account_id,omitempty"`
+	// Targeting is the unified targeting (countries, ages, genders...);
+	// raw_targeting passes a native spec through.
+	Targeting map[string]any `json:"targeting,omitempty"`
+	Schedule  *AdSchedule    `json:"schedule,omitempty"`
+	// Metrics are the latest synced numbers: spend (major units),
+	// impressions, clicks, ctr.
+	Metrics map[string]any `json:"metrics,omitempty"`
+	// ExternalCampaignID is the network's campaign id; nil while a draft.
+	ExternalCampaignID *string `json:"external_campaign_id,omitempty"`
+	// Errors is the readable reason when the status is "error" or
+	// "rejected".
+	Errors *string `json:"errors,omitempty"`
+	// GroupID is set on a campaign of a "Create an ad" draft: start it with
+	// Ads.Drafts.Launch.
+	GroupID      *string `json:"group_id,omitempty"`
+	LastSyncedAt *string `json:"last_synced_at,omitempty"`
+	// CreatedAt and UpdatedAt arrive in camelCase on a campaign
+	// (`createdAt`, `updatedAt`), unlike AdAccount.CreatedAt.
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+// AdCampaignListParams filters Ads.List.
+type AdCampaignListParams struct {
+	// Status is one of the AdCampaign statuses.
+	Status string
+	// Platform is "meta", "pinterest", "tiktok", "linkedin", "x" or
+	// "google".
+	Platform string
+	// CampaignType is "campaign" or "boost".
+	CampaignType string
+	// Limit is 1 to 100 (default 25).
+	Limit int
+	// Offset is the number of campaigns to skip.
+	Offset int
+}
+
+// AdBoostParams is the request body for Ads.Boost.
+type AdBoostParams struct {
+	// PostID is the OmniSocials id of a published post.
+	PostID string `json:"post_id"`
+	// AdAccountID is from Ads.ListAccounts, picked in the dashboard.
+	AdAccountID AdID     `json:"ad_account_id"`
+	Budget      AdBudget `json:"budget"`
+	// Objective is "engagement", "traffic", "awareness" or "video_views".
+	Objective string         `json:"objective,omitempty"`
+	Targeting map[string]any `json:"targeting,omitempty"`
+	Schedule  *AdSchedule    `json:"schedule,omitempty"`
+	Creative  *AdCreative    `json:"creative,omitempty"`
+	Name      string         `json:"name,omitempty"`
+}
+
+// AdBoostMultiParams is the request body for Ads.BoostMulti: one draft boost
+// per ad account (up to 10), each with the SAME budget.
+type AdBoostMultiParams struct {
+	PostID       string         `json:"post_id"`
+	AdAccountIDs []AdID         `json:"ad_account_ids"`
+	Budget       AdBudget       `json:"budget"`
+	Objective    string         `json:"objective,omitempty"`
+	Targeting    map[string]any `json:"targeting,omitempty"`
+	Schedule     *AdSchedule    `json:"schedule,omitempty"`
+	Creative     *AdCreative    `json:"creative,omitempty"`
+	Name         string         `json:"name,omitempty"`
+}
+
+// AdCampaignCreateParams is the request body for Ads.Create.
+type AdCampaignCreateParams struct {
+	AdAccountID AdID           `json:"ad_account_id"`
+	Name        string         `json:"name"`
+	Budget      AdBudget       `json:"budget"`
+	Objective   string         `json:"objective,omitempty"`
+	Targeting   map[string]any `json:"targeting,omitempty"`
+	Schedule    *AdSchedule    `json:"schedule,omitempty"`
+}
+
+// AdCampaignUpdateParams is the request body for Ads.Update. Only set
+// fields are sent.
+type AdCampaignUpdateParams struct {
+	Name   string    `json:"name,omitempty"`
+	Budget *AdBudget `json:"budget,omitempty"`
+	// ConfirmBudgetAmount is required to RAISE the budget of a running
+	// campaign: the new amount again, after the person agreed to it.
+	ConfirmBudgetAmount float64        `json:"confirm_budget_amount,omitempty"`
+	Targeting           map[string]any `json:"targeting,omitempty"`
+	Schedule            *AdSchedule    `json:"schedule,omitempty"`
+}
+
+// AdMultiResponse is the `{ results }` answer of Ads.BoostMulti and
+// Ads.ActivateMulti (no `data` envelope).
+type AdMultiResponse[T any] struct {
+	Results []T `json:"results"`
+}
+
+// AdMultiBoostResult is one ad account of Ads.BoostMulti. One failed
+// account never stops the others.
+type AdMultiBoostResult struct {
+	AdAccountID AdID        `json:"ad_account_id"`
+	Platform    *string     `json:"platform,omitempty"`
+	OK          bool        `json:"ok"`
+	Campaign    *AdCampaign `json:"campaign,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	Code        string      `json:"code,omitempty"`
+}
+
+// AdMultiActivateResult is one campaign of Ads.ActivateMulti.
+type AdMultiActivateResult struct {
+	CampaignID AdID        `json:"campaign_id"`
+	OK         bool        `json:"ok"`
+	Campaign   *AdCampaign `json:"campaign,omitempty"`
+	Error      string      `json:"error,omitempty"`
+	Code       string      `json:"code,omitempty"`
+}
+
+// AdDeleted is the answer of Ads.Delete and Ads.Drafts.Delete.
+type AdDeleted struct {
+	Deleted bool `json:"deleted"`
+}
+
+// ---- Overview, suggestions, keyword research ------------------------------------
+
+// AdsTotals are the summed numbers of every campaign, spend in major units.
+type AdsTotals struct {
+	Spend       float64 `json:"spend"`
+	Impressions float64 `json:"impressions"`
+	Clicks      float64 `json:"clicks"`
+}
+
+// AdsOverview is the Ads.Overview payload.
+type AdsOverview struct {
+	ConnectedAccounts int            `json:"connected_accounts"`
+	CampaignsTotal    int            `json:"campaigns_total"`
+	CampaignsByStatus map[string]int `json:"campaigns_by_status"`
+	Totals            AdsTotals      `json:"totals"`
+}
+
+// BoostSuggestion is an organic post that does better than the workspace
+// median: a boost candidate.
+type BoostSuggestion struct {
+	PostID          string  `json:"post_id"`
+	Platform        string  `json:"platform"`
+	PublishedAt     string  `json:"published_at"`
+	MetricValue     float64 `json:"metric_value"`
+	WorkspaceMedian float64 `json:"workspace_median"`
+	// Multiplier is how many times the median.
+	Multiplier         float64 `json:"multiplier"`
+	Reason             string  `json:"reason"`
+	DescriptionSnippet *string `json:"description_snippet,omitempty"`
+	ThumbnailURL       *string `json:"thumbnail_url,omitempty"`
+}
+
+// AdKeywordMonth is the search volume of one month.
+type AdKeywordMonth struct {
+	Year     *int  `json:"year"`
+	Month    *int  `json:"month"`
+	Searches int64 `json:"searches"`
+}
+
+// AdKeywordIdea is one keyword with its Google search numbers.
+type AdKeywordIdea struct {
+	Keyword string `json:"keyword"`
+	// AvgMonthlySearches is the average over the last 12 months.
+	AvgMonthlySearches int64 `json:"avg_monthly_searches"`
+	// Competition is "low", "medium", "high" or "unspecified".
+	Competition string `json:"competition"`
+	// CompetitionIndex is 0 to 100.
+	CompetitionIndex *int `json:"competition_index"`
+	// LowTopOfPageBid and HighTopOfPageBid are the top-of-page bid range in
+	// the ad account's currency (major units).
+	LowTopOfPageBid  *float64         `json:"low_top_of_page_bid"`
+	HighTopOfPageBid *float64         `json:"high_top_of_page_bid"`
+	MonthlySearches  []AdKeywordMonth `json:"monthly_searches"`
+	// CloseVariants is set on Ads.KeywordMetrics only.
+	CloseVariants []string `json:"close_variants,omitempty"`
+}
+
+// AdKeywordResearchParams is the request body for Ads.ResearchKeywords.
+// Give Keywords, URL or both.
+type AdKeywordResearchParams struct {
+	// Keywords are seed keywords, up to 20.
+	Keywords []string `json:"keywords,omitempty"`
+	// URL is a landing page or homepage to take ideas from.
+	URL string `json:"url,omitempty"`
+	// Country is ISO 3166-1 alpha-2, default "US".
+	Country string `json:"country,omitempty"`
+	// Language is ISO 639-1, default "en".
+	Language string `json:"language,omitempty"`
+	// Limit is 1 to 500, default 100.
+	Limit int `json:"limit,omitempty"`
+	// AdAccountID is only needed when the workspace has more than one
+	// Google Ads account.
+	AdAccountID AdID `json:"ad_account_id,omitempty"`
+}
+
+// AdKeywordSeed echoes the seed of a keyword research call.
+type AdKeywordSeed struct {
+	Keywords []string `json:"keywords"`
+	URL      *string  `json:"url"`
+}
+
+// AdKeywordResearchResult is the Ads.ResearchKeywords payload.
+type AdKeywordResearchResult struct {
+	AdAccountID AdID            `json:"ad_account_id"`
+	Country     string          `json:"country"`
+	Language    string          `json:"language"`
+	Seed        AdKeywordSeed   `json:"seed"`
+	Total       int             `json:"total"`
+	Cached      bool            `json:"cached"`
+	Ideas       []AdKeywordIdea `json:"ideas"`
+}
+
+// AdKeywordMetricsParams is the request body for Ads.KeywordMetrics.
+type AdKeywordMetricsParams struct {
+	// Keywords are the exact keywords to measure.
+	Keywords    []string `json:"keywords"`
+	Country     string   `json:"country,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	AdAccountID AdID     `json:"ad_account_id,omitempty"`
+}
+
+// AdKeywordMetricsResult is the Ads.KeywordMetrics payload.
+type AdKeywordMetricsResult struct {
+	AdAccountID AdID            `json:"ad_account_id"`
+	Country     string          `json:"country"`
+	Language    string          `json:"language"`
+	Total       int             `json:"total"`
+	Cached      bool            `json:"cached"`
+	Keywords    []AdKeywordIdea `json:"keywords"`
+}
+
+// ---- Capabilities ------------------------------------------------------------------
+
+// AdGoalSupport says how a network handles one goal.
+type AdGoalSupport struct {
+	// OK is true, false or "approx" (the network optimises for something
+	// close to the goal; Note says what).
+	OK         any    `json:"ok"`
+	Note       string `json:"note,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	NeedsVideo bool   `json:"needsVideo,omitempty"`
+}
+
+// AdTextLimit is the limit of one text field on a network.
+type AdTextLimit struct {
+	Max      int  `json:"max"`
+	Shown    int  `json:"shown"`
+	Required bool `json:"required"`
+	// Field is false when the network has no such field.
+	Field   *bool `json:"field,omitempty"`
+	NoEmoji bool  `json:"noEmoji,omitempty"`
+}
+
+// AdMinDailyBudget is a network's minimum daily budget, in major units.
+type AdMinDailyBudget struct {
+	Default    float64            `json:"default"`
+	ByCurrency map[string]float64 `json:"byCurrency,omitempty"`
+}
+
+// AdNetworkCapabilities is what one network accepts for a new ad.
+type AdNetworkCapabilities struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	RunsOn   string `json:"runs_on"`
+	Identity string `json:"identity"`
+	// Goals per objective key.
+	Goals map[string]AdGoalSupport `json:"goals"`
+	// Media holds the picture and video rules (formats, sizes, ratios).
+	Media map[string]any `json:"media"`
+	// Text per field: "primary_text", "headline", "description".
+	Text map[string]AdTextLimit `json:"text"`
+	// CTAs are the button keys the network takes.
+	CTAs              []string         `json:"ctas"`
+	NoCTA             bool             `json:"no_cta"`
+	LinkRequired      bool             `json:"link_required,omitempty"`
+	RequiresCountries bool             `json:"requires_countries,omitempty"`
+	ExtraFields       []string         `json:"extra_fields"`
+	MinDailyBudget    AdMinDailyBudget `json:"min_daily_budget"`
+	MinDurationDays   *int             `json:"min_duration_days,omitempty"`
+	// BoostGoals are the goals a boost can use on this network.
+	BoostGoals []string `json:"boost_goals,omitempty"`
+	// SpendNote says how far a day's spend can go over the daily amount.
+	SpendNote         string `json:"spend_note,omitempty"`
+	MaxAdsPerCampaign *int   `json:"max_ads_per_campaign,omitempty"`
+	Review            string `json:"review"`
+}
+
+// AdCTA is one button: its key and the label people see.
+type AdCTA struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}
+
+// AdCapabilities is the Ads.Capabilities payload.
+type AdCapabilities struct {
+	Networks []AdNetworkCapabilities `json:"networks"`
+	Goals    []string                `json:"goals"`
+	CTAs     []AdCTA                 `json:"ctas"`
+	// CreateNetworks are the networks open to your organisation for new
+	// ads.
+	CreateNetworks []string `json:"create_networks"`
+	// NetworkStates per network: "live", "preview" (your organisation only)
+	// or "coming_soon".
+	NetworkStates map[string]string `json:"network_states,omitempty"`
+	// APIDraftOnly lists the networks where the API and MCP stop at the draft:
+	// a person starts and changes those ads in the app.
+	APIDraftOnly []string `json:"api_draft_only,omitempty"`
+}
+
+// ---- Drafts ------------------------------------------------------------------------
+
+// AdMediaFile is one picture or video of a draft ad.
+type AdMediaFile struct {
+	URL string `json:"url"`
+	// Type is "image" or "video".
+	Type   string `json:"type"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
+	// Duration is in seconds, for a video.
+	Duration float64 `json:"duration,omitempty"`
+	// ThumbnailURL is the cover picture of a video.
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
+}
+
+// AdPlacementMedia holds extra files for one kind of placement.
+type AdPlacementMedia struct {
+	// StoriesReels is Meta only, optional: a second picture or video for
+	// Stories and Reels, upright 9:16 (1080 x 1920), the same kind as the
+	// main file. Without it Meta fits the main file. Not for the
+	// engagement goal.
+	StoriesReels *AdMediaFile `json:"stories_reels,omitempty"`
+}
+
+// AdDraftAd is one ad of a draft: written once, mapped onto every network.
+type AdDraftAd struct {
+	Key         string        `json:"key,omitempty"`
+	Name        string        `json:"name,omitempty"`
+	Media       []AdMediaFile `json:"media"`
+	PrimaryText string        `json:"primary_text"`
+	// PrimaryTextB is a second text: the network tests A against B (a
+	// second ad).
+	PrimaryTextB string `json:"primary_text_b,omitempty"`
+	Headline     string `json:"headline,omitempty"`
+	Description  string `json:"description,omitempty"`
+	// CTA is a button key from Ads.Capabilities.
+	CTA  string `json:"cta,omitempty"`
+	Link string `json:"link"`
+	// Overrides per network replace the shared text, e.g.
+	// {"x": {"primary_text": "..."}}.
+	Overrides map[string]any `json:"overrides,omitempty"`
+	// Network holds network-only fields, e.g. {"google": {"business_name":
+	// "...", "logo": {"url": "..."}}}.
+	Network        map[string]any    `json:"network,omitempty"`
+	PlacementMedia *AdPlacementMedia `json:"placement_media,omitempty"`
+}
+
+// AdDraftTargeting is who a draft reaches.
+type AdDraftTargeting struct {
+	// Countries are ISO country codes.
+	Countries []string `json:"countries"`
+	// AutomaticAudience true (the default) lets the network find the
+	// audience (no age or gender limits).
+	AutomaticAudience *bool `json:"automatic_audience,omitempty"`
+	AgeMin            int   `json:"age_min,omitempty"`
+	AgeMax            int   `json:"age_max,omitempty"`
+	// Genders: "male", "female".
+	Genders []string `json:"genders,omitempty"`
+	// Placements is "automatic" (default) or "feeds".
+	Placements string `json:"placements,omitempty"`
+	// PoliticalIntent is LinkedIn's EU statement: "NOT_POLITICAL" or
+	// "POLITICAL".
+	PoliticalIntent string `json:"political_intent,omitempty"`
+	// SpecialAdCategories and SpecialAdCategoryCountry are Meta's special
+	// ad categories (housing, employment, financial products, ...).
+	SpecialAdCategories      []string `json:"special_ad_categories,omitempty"`
+	SpecialAdCategoryCountry []string `json:"special_ad_category_country,omitempty"`
+	// RegionalIdentities is Meta's verified payer per regional category.
+	RegionalIdentities map[string]any `json:"regional_identities,omitempty"`
+}
+
+// AdDraftSchedule is how long a draft runs.
+type AdDraftSchedule struct {
+	// DurationDays is the number of days; nil runs the ad until it is
+	// stopped.
+	DurationDays *int `json:"duration_days"`
+}
+
+// AdDraftPlatform is one entry of AdDraftParams.Platforms with its own
+// daily amount or ad account.
+type AdDraftPlatform struct {
+	Platform     string  `json:"platform"`
+	BudgetAmount float64 `json:"budget_amount,omitempty"`
+	AdAccountID  AdID    `json:"ad_account_id,omitempty"`
+}
+
+// AdDraftParams is the request body for Ads.Drafts.Create and
+// Ads.Drafts.Update (the full draft).
+type AdDraftParams struct {
+	Name string `json:"name,omitempty"`
+	// Objective is "traffic", "engagement", "awareness" or "video_views".
+	Objective string `json:"objective"`
+	// Platforms: a []string of network keys, or a []AdDraftPlatform (or a
+	// mixed []any) for a daily amount or an ad account per network.
+	Platforms any `json:"platforms"`
+	// Budget is the daily amount per network (leave Type empty).
+	Budget AdBudget `json:"budget"`
+	// Schedule: nil leaves it out; &AdDraftSchedule{} runs until stopped.
+	Schedule  *AdDraftSchedule `json:"schedule,omitempty"`
+	Targeting AdDraftTargeting `json:"targeting"`
+	Ads       []AdDraftAd      `json:"ads"`
+}
+
+// AdDraftIssue is one thing that stops a network or an ad from starting.
+type AdDraftIssue struct {
+	Field   string `json:"field"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// AdDraftAdReadiness is the readiness of one ad on one network.
+type AdDraftAdReadiness struct {
+	Key    string         `json:"key"`
+	Index  int            `json:"index"`
+	Ready  bool           `json:"ready"`
+	Issues []AdDraftIssue `json:"issues"`
+}
+
+// AdDraftReadiness says what still stops a network of a draft.
+type AdDraftReadiness struct {
+	Ready  bool                 `json:"ready"`
+	Issues []AdDraftIssue       `json:"issues"`
+	Ads    []AdDraftAdReadiness `json:"ads"`
+}
+
+// AdDraftAccount is the ad account of a network in a draft (and in
+// AdDraftDefaults.Accounts).
+type AdDraftAccount struct {
+	ID       AdID    `json:"id"`
+	Name     *string `json:"name"`
+	Currency *string `json:"currency"`
+	// BillingOK is false when no payment method is set on the network; nil
+	// when the network does not say.
+	BillingOK   *bool `json:"billing_ok"`
+	NeedsReauth bool  `json:"needs_reauth"`
+}
+
+// AdDraftCampaign is the campaign of one network in a draft.
+type AdDraftCampaign struct {
+	ID       AdID   `json:"id"`
+	Platform string `json:"platform"`
+	Status   string `json:"status"`
+	// Editable is true while the network never started: a save changes it,
+	// a launch starts it.
+	Editable           bool             `json:"editable"`
+	ExternalCampaignID *string          `json:"external_campaign_id"`
+	Budget             *AdBudget        `json:"budget"`
+	AdAccount          *AdDraftAccount  `json:"ad_account"`
+	Errors             *string          `json:"errors"`
+	Readiness          AdDraftReadiness `json:"readiness"`
+}
+
+// AdCurrencyChange is set when a network's ad account uses another currency
+// than the draft.
+type AdCurrencyChange struct {
+	Platform string `json:"platform"`
+	From     string `json:"from"`
+	To       string `json:"to"`
+}
+
+// AdDraft is a "Create an ad" draft group.
+type AdDraft struct {
+	GroupID   string `json:"group_id"`
+	Name      string `json:"name"`
+	Objective string `json:"objective"`
+	// Status is "draft" or "launched" (at least one network started).
+	Status string `json:"status"`
+	// CanLaunch is true while at least one network never started:
+	// Ads.Drafts.Launch can start it.
+	CanLaunch bool `json:"can_launch"`
+	// Budget is the daily amount per network.
+	Budget    AdBudget          `json:"budget"`
+	Schedule  AdDraftSchedule   `json:"schedule"`
+	Targeting AdDraftTargeting  `json:"targeting"`
+	Ads       []AdDraftAd       `json:"ads"`
+	Campaigns []AdDraftCampaign `json:"campaigns"`
+	// ReviewURL is the builder in the dashboard, where a person can check
+	// and start the ad.
+	ReviewURL       string            `json:"review_url"`
+	CurrencyChanged *AdCurrencyChange `json:"currency_changed,omitempty"`
+	UpdatedAt       *string           `json:"updated_at,omitempty"`
+}
+
+// AdFollowerShare is the share of the Instagram followers in one country,
+// in percent.
+type AdFollowerShare struct {
+	Country string  `json:"country"`
+	Share   float64 `json:"share"`
+}
+
+// AdDraftDefaults is the Ads.Drafts.Defaults payload: suggested countries
+// and currency for a new ad.
+type AdDraftDefaults struct {
+	Countries []string `json:"countries"`
+	// CountriesSource is "followers", "timezone", "ad_account" or empty.
+	CountriesSource string            `json:"countries_source"`
+	FollowerShare   []AdFollowerShare `json:"follower_share"`
+	Currency        string            `json:"currency"`
+	// CurrencySource is "ad_account", "country" or "default".
+	CurrencySource string   `json:"currency_source"`
+	CreateNetworks []string `json:"create_networks"`
+	// Accounts is the workspace's ad account per network.
+	Accounts map[string]AdDraftAccount `json:"accounts"`
+}
+
+// AdDraftAccountParams is the request body for Ads.Drafts.AttachAccount.
+type AdDraftAccountParams struct {
+	Platform string `json:"platform"`
+	// AdAccountID is from Ads.ListAccounts, the same network.
+	AdAccountID AdID `json:"ad_account_id"`
+}
+
+// AdDraftLaunchParams is the request body for Ads.Drafts.Launch. Give
+// ConfirmBudgetAmount (one daily amount for every network) or
+// ConfirmBudgetAmounts (per campaign id). Each must equal that campaign's
+// daily amount, else 400 budget_confirmation_required and nothing is
+// written.
+type AdDraftLaunchParams struct {
+	ConfirmBudgetAmount  float64          `json:"confirm_budget_amount,omitempty"`
+	ConfirmBudgetAmounts map[AdID]float64 `json:"confirm_budget_amounts,omitempty"`
+}
+
+// AdDraftLaunchItem is the outcome of one network of a launch.
+type AdDraftLaunchItem struct {
+	CampaignID AdID   `json:"campaign_id"`
+	Platform   string `json:"platform"`
+	OK         bool   `json:"ok"`
+	Code       string `json:"code,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// AdDraftLaunchResult is the Ads.Drafts.Launch payload: the draft after the
+// launch and one result per network.
+type AdDraftLaunchResult struct {
+	Group   AdDraft             `json:"group"`
+	Results []AdDraftLaunchItem `json:"results"`
+}
+
+// ---- Webhook event -----------------------------------------------------------------
+
+// AdStatusChangedEventData is the `data` of an `ad.status_changed` webhook
+// delivery: the campaign, not a post. It fires when a campaign changes
+// status, for example "pending_review" to "active" (the network's review
+// passed and spend started) or to "rejected". Decode the raw delivery into
+// a struct with `Data AdStatusChangedEventData` after
+// VerifyWebhookSignature accepted it.
+type AdStatusChangedEventData struct {
+	CampaignID AdID `json:"campaign_id"`
+	// WorkspaceID arrives as a number or a string.
+	WorkspaceID        json.Number `json:"workspace_id"`
+	Name               *string     `json:"name"`
+	Platform           *string     `json:"platform"`
+	CampaignType       *string     `json:"campaign_type"`
+	Status             string      `json:"status"`
+	PreviousStatus     *string     `json:"previous_status"`
+	ExternalCampaignID *string     `json:"external_campaign_id"`
+	Budget             *AdBudget   `json:"budget"`
+}
+
+// ---- AdsService methods ----------------------------------------------------------
+
+func adCampaignPath(id AdID) string {
+	return "/ads/campaigns/" + url.PathEscape(id.String())
+}
+
+// ListAccounts calls `GET /ads/accounts`: the connected ad accounts.
+// Accounts are connected and picked in the dashboard; only IsSelected
+// accounts can run campaigns. Requires the ads:read scope.
+func (s *AdsService) ListAccounts(ctx context.Context) (*AdAccountsResponse, error) {
+	var out AdAccountsResponse
+	if err := s.client.get(ctx, "/ads/accounts", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Capabilities calls `GET /ads/capabilities`: what each network accepts for
+// a new ad (goals, media, text limits, buttons, minimum daily budget),
+// CreateNetworks and NetworkStates. Requires the ads:read scope.
+func (s *AdsService) Capabilities(ctx context.Context) (*ItemResponse[AdCapabilities], error) {
+	var out ItemResponse[AdCapabilities]
+	if err := s.client.get(ctx, "/ads/capabilities", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// List calls `GET /ads/campaigns`: campaigns and boosts. A nil params value
+// lists them all. Requires the ads:read scope.
+func (s *AdsService) List(ctx context.Context, params *AdCampaignListParams) (*ListResponse[AdCampaign], error) {
+	query := url.Values{}
+	if params != nil {
+		if params.Status != "" {
+			query.Set("status", params.Status)
+		}
+		if params.Platform != "" {
+			query.Set("platform", params.Platform)
+		}
+		if params.CampaignType != "" {
+			query.Set("campaign_type", params.CampaignType)
+		}
+		if params.Limit > 0 {
+			query.Set("limit", strconv.Itoa(params.Limit))
+		}
+		if params.Offset > 0 {
+			query.Set("offset", strconv.Itoa(params.Offset))
+		}
+	}
+	var out ListResponse[AdCampaign]
+	if err := s.client.get(ctx, "/ads/campaigns", query, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Get calls `GET /ads/campaigns/:id`: one campaign with its latest numbers.
+// Requires the ads:read scope.
+func (s *AdsService) Get(ctx context.Context, id AdID) (*ItemResponse[AdCampaign], error) {
+	var out ItemResponse[AdCampaign]
+	if err := s.client.get(ctx, adCampaignPath(id), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Boost calls `POST /ads/boost`: boost a published post. It creates a DRAFT
+// boost: no spend until Activate. TikTok needs Creative.SparkAuthCode,
+// Google needs Headlines, Descriptions and LogoURL. Requires the ads:write
+// scope.
+func (s *AdsService) Boost(ctx context.Context, params *AdBoostParams) (*ItemResponse[AdCampaign], error) {
+	var out ItemResponse[AdCampaign]
+	if err := s.client.post(ctx, "/ads/boost", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BoostMulti calls `POST /ads/boost-multi`: one DRAFT boost per ad account
+// (up to 10), each with the same budget, so the total is amount x accounts.
+// Answers Results; one failed account never stops the others. Requires the
+// ads:write scope.
+func (s *AdsService) BoostMulti(ctx context.Context, params *AdBoostMultiParams) (*AdMultiResponse[AdMultiBoostResult], error) {
+	var out AdMultiResponse[AdMultiBoostResult]
+	if err := s.client.post(ctx, "/ads/boost-multi", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Create calls `POST /ads/campaigns`: a DRAFT campaign without ads. It
+// cannot start (campaign_has_no_ads): use Ads.Drafts.Create for a new ad.
+// Requires the ads:write scope.
+func (s *AdsService) Create(ctx context.Context, params *AdCampaignCreateParams) (*ItemResponse[AdCampaign], error) {
+	var out ItemResponse[AdCampaign]
+	if err := s.client.post(ctx, "/ads/campaigns", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Update calls `PATCH /ads/campaigns/:id`: change the name, budget,
+// targeting or schedule. To RAISE the budget of a running campaign, which
+// raises real ad spend, show the person the new amount, get their yes, and
+// pass it again as ConfirmBudgetAmount. Not retried after a 5xx or a
+// connection error: read the campaign with Get to see what happened.
+// Requires the ads:write scope.
+func (s *AdsService) Update(ctx context.Context, id AdID, params *AdCampaignUpdateParams) (*ItemResponse[AdCampaign], error) {
+	var out ItemResponse[AdCampaign]
+	if err := s.client.doJSONWith(ctx, http.MethodPatch, adCampaignPath(id), jsonBody(params), &out, retryRateLimit); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Activate calls `POST /ads/campaigns/:id/activate`: it STARTS REAL AD
+// SPEND. Show the person the budget (amount, currency, daily or lifetime)
+// and get their yes first; confirmBudgetAmount must equal the campaign's
+// budget amount. A campaign of a draft group answers 409 use_draft_launch:
+// use Ads.Drafts.Launch. Not retried after a 5xx or a connection error:
+// read the campaign with Get to see what happened. Requires the ads:write
+// scope.
+func (s *AdsService) Activate(ctx context.Context, id AdID, confirmBudgetAmount float64) (*ItemResponse[AdCampaign], error) {
+	body := map[string]any{"confirm_budget_amount": confirmBudgetAmount}
+	var out ItemResponse[AdCampaign]
+	if err := s.client.doJSONWith(ctx, http.MethodPost, adCampaignPath(id)+"/activate", body, &out, retryRateLimit); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ActivateMulti calls `POST /ads/campaigns/activate-multi`: it STARTS REAL
+// AD SPEND on up to 10 campaigns. Every campaign's budget must equal
+// confirmBudgetAmount; show the person the total (amount x campaigns) and
+// get their yes first. Answers Results. Not retried after a 5xx or a
+// connection error: read the campaigns with Get to see what happened.
+// Requires the ads:write scope.
+func (s *AdsService) ActivateMulti(ctx context.Context, campaignIDs []AdID, confirmBudgetAmount float64) (*AdMultiResponse[AdMultiActivateResult], error) {
+	body := map[string]any{"campaign_ids": campaignIDs, "confirm_budget_amount": confirmBudgetAmount}
+	var out AdMultiResponse[AdMultiActivateResult]
+	if err := s.client.doJSONWith(ctx, http.MethodPost, "/ads/campaigns/activate-multi", body, &out, retryRateLimit); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Pause calls `POST /ads/campaigns/:id/pause`: pause a campaign (also while
+// in review). Requires the ads:write scope.
+func (s *AdsService) Pause(ctx context.Context, id AdID) (*ItemResponse[AdCampaign], error) {
+	var out ItemResponse[AdCampaign]
+	if err := s.client.post(ctx, adCampaignPath(id)+"/pause", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Resume calls `POST /ads/campaigns/:id/resume`: resume a paused campaign,
+// which STARTS REAL AD SPEND again. Show the person the budget and get
+// their yes first. Not retried after a 5xx or a connection error: read the
+// campaign with Get to see what happened. Requires the ads:write scope.
+func (s *AdsService) Resume(ctx context.Context, id AdID) (*ItemResponse[AdCampaign], error) {
+	var out ItemResponse[AdCampaign]
+	if err := s.client.doJSONWith(ctx, http.MethodPost, adCampaignPath(id)+"/resume", nil, &out, retryRateLimit); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Delete calls `DELETE /ads/campaigns/:id`: delete a campaign, on the
+// network too. A campaign that spent is archived: its spend stays in the
+// totals. Requires the ads:write scope.
+func (s *AdsService) Delete(ctx context.Context, id AdID) (*ItemResponse[AdDeleted], error) {
+	var out ItemResponse[AdDeleted]
+	if err := s.client.do(ctx, http.MethodDelete, adCampaignPath(id), nil, nil, "", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Overview calls `GET /ads/overview`: accounts, campaigns per status and
+// total spend. Requires the ads:read scope.
+func (s *AdsService) Overview(ctx context.Context) (*ItemResponse[AdsOverview], error) {
+	var out ItemResponse[AdsOverview]
+	if err := s.client.get(ctx, "/ads/overview", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Suggestions calls `GET /ads/suggestions`: organic posts that do better
+// than the workspace median, boost candidates. Read-only. Requires the
+// ads:read scope.
+func (s *AdsService) Suggestions(ctx context.Context) (*ListResponse[BoostSuggestion], error) {
+	var out ListResponse[BoostSuggestion]
+	if err := s.client.get(ctx, "/ads/suggestions", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ResearchKeywords calls `POST /ads/research/keywords`: keyword ideas from
+// seed keywords or a URL, through the connected Google Ads account.
+// Read-only and free. Requires the ads:read scope.
+func (s *AdsService) ResearchKeywords(ctx context.Context, params *AdKeywordResearchParams) (*ItemResponse[AdKeywordResearchResult], error) {
+	var out ItemResponse[AdKeywordResearchResult]
+	if err := s.client.post(ctx, "/ads/research/keywords", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// KeywordMetrics calls `POST /ads/research/keywords/metrics`: search
+// numbers for an exact keyword list. Read-only. Requires the ads:read scope.
+func (s *AdsService) KeywordMetrics(ctx context.Context, params *AdKeywordMetricsParams) (*ItemResponse[AdKeywordMetricsResult], error) {
+	var out ItemResponse[AdKeywordMetricsResult]
+	if err := s.client.post(ctx, "/ads/research/keywords/metrics", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ---- AdDraftsService methods -----------------------------------------------------
+
+func adDraftPath(groupID string) string {
+	return "/ads/drafts/" + url.PathEscape(groupID)
+}
+
+// Defaults calls `GET /ads/drafts/defaults`: suggested countries (where the
+// Instagram followers are), the currency and the workspace's ad account per
+// network. Requires the ads:read scope.
+func (s *AdDraftsService) Defaults(ctx context.Context) (*ItemResponse[AdDraftDefaults], error) {
+	var out ItemResponse[AdDraftDefaults]
+	if err := s.client.get(ctx, "/ads/drafts/defaults", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Create calls `POST /ads/drafts`: save a new ad as a draft group. It needs
+// no ad account and spends nothing. Read Ads.Capabilities first for what
+// each network accepts. The answer carries ReviewURL (the builder in the
+// dashboard) and per network Readiness. Requires the ads:write scope.
+func (s *AdDraftsService) Create(ctx context.Context, params *AdDraftParams) (*ItemResponse[AdDraft], error) {
+	var out ItemResponse[AdDraft]
+	if err := s.client.post(ctx, "/ads/drafts", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Get calls `GET /ads/drafts/:group_id`: one draft group. Requires the
+// ads:read scope.
+func (s *AdDraftsService) Get(ctx context.Context, groupID string) (*ItemResponse[AdDraft], error) {
+	var out ItemResponse[AdDraft]
+	if err := s.client.get(ctx, adDraftPath(groupID), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Update calls `PUT /ads/drafts/:group_id`: replace the draft with the full
+// body. Networks that already started are left alone
+// (AdDraftCampaign.Editable). Requires the ads:write scope.
+func (s *AdDraftsService) Update(ctx context.Context, groupID string, params *AdDraftParams) (*ItemResponse[AdDraft], error) {
+	var out ItemResponse[AdDraft]
+	if err := s.client.put(ctx, adDraftPath(groupID), jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Delete calls `DELETE /ads/drafts/:group_id`: delete a draft group that
+// never started. Requires the ads:write scope.
+func (s *AdDraftsService) Delete(ctx context.Context, groupID string) (*ItemResponse[AdDeleted], error) {
+	var out ItemResponse[AdDeleted]
+	if err := s.client.do(ctx, http.MethodDelete, adDraftPath(groupID), nil, nil, "", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// AttachAccount calls `POST /ads/drafts/:group_id/account`: set the ad
+// account of one network in the draft (from Ads.ListAccounts, the same
+// network). Requires the ads:write scope.
+func (s *AdDraftsService) AttachAccount(ctx context.Context, groupID string, params *AdDraftAccountParams) (*ItemResponse[AdDraft], error) {
+	var out ItemResponse[AdDraft]
+	if err := s.client.post(ctx, adDraftPath(groupID)+"/account", jsonBody(params), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Launch calls `POST /ads/drafts/:group_id/launch`: it STARTS REAL AD SPEND
+// for every network of the draft that never started. Show the person the
+// daily amount per network and get their yes first, then pass it as
+// ConfirmBudgetAmount (or per campaign as ConfirmBudgetAmounts). A wrong or
+// missing amount answers 400 budget_confirmation_required and writes
+// nothing. Results per network; one failed network never stops the others.
+// Not retried after a 5xx or a connection error: read the draft with Get to
+// see what started. Requires the ads:write scope.
+func (s *AdDraftsService) Launch(ctx context.Context, groupID string, params *AdDraftLaunchParams) (*ItemResponse[AdDraftLaunchResult], error) {
+	var out ItemResponse[AdDraftLaunchResult]
+	if err := s.client.doJSONWith(ctx, http.MethodPost, adDraftPath(groupID)+"/launch", jsonBody(params), &out, retryRateLimit); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

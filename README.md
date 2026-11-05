@@ -155,7 +155,22 @@ for _, event := range events.Data {
 }
 ```
 
-The events response is `Data`, `Counts` and `Pagination`, not the plain list: `Counts` is the number of events per outcome (`sent`, `skipped`, `failed`, `pending`, `queued`, `opted_out`). An automation can also listen on a post published outside OmniSocials (`client.Automations.Create` with `InstagramMediaID`), on the next post the workspace publishes (`Trigger: &omnisocials.AutomationTriggerInput{Scope: "next_post"}`) or on every post (`Scope: "any"`), and on DMs and story replies (`Kinds: []string{"dm", "story_reply"}`).
+The events response is `Data`, `Counts` and `Pagination`, not the plain list: `Counts` is the number of events per outcome (`sent`, `skipped`, `failed`, `pending`, `queued`, `opted_out`, `waiting`). An automation can also listen on a post published outside OmniSocials (`client.Automations.Create` with `InstagramMediaID`), on the next post the workspace publishes (`Trigger: &omnisocials.AutomationTriggerInput{Scope: "next_post"}`) or on every post (`Scope: "any"`), and on DMs and story replies (`Kinds: []string{"dm", "story_reply"}`).
+
+Follow first (`Actions.FollowGate`, Instagram only) sends the link only to people who follow the account. On a comment the private reply is a first message with one button; a tap makes OmniSocials ask Instagram whether the person follows. A follower gets `Actions.DM.Text`, anyone else gets the `NotFollowing` message with its button, and every later tap checks again. A DM or a story reply is checked at once. When Instagram gives no answer the link goes out anyway. Texts hold 640 characters and buttons 20; leave them empty for the defaults. A person who has not followed yet is an event with `Outcome` `waiting` and `event.FollowGate` (`State`, `Taps`, `Followed`, `Checked`, `AfterAsk`); `Stats.Followed` counts the people who followed after the ask. `Enabled: omnisocials.Bool(true)` on a Facebook or X automation is a `400 follow_gate_instagram_only`.
+
+```go
+_, err = client.Automations.Update(ctx, automationID, &omnisocials.AutomationUpdateParams{
+	Actions: &omnisocials.AutomationActions{
+		DM: omnisocials.AutomationDM{Text: "Here is the guide: https://example.com/guide"},
+		FollowGate: &omnisocials.AutomationFollowGate{
+			Enabled:      omnisocials.Bool(true),
+			FirstMessage: &omnisocials.FollowGateMessage{Text: "Tap the button and I'll send you the link 👇", Button: "Send me the link"},
+			NotFollowing: &omnisocials.FollowGateMessage{Text: "Almost there! Follow @yourbrand first, then tap the button again.", Button: "I follow now"},
+		},
+	},
+})
+```
 
 A Facebook Page works the same way, and the DM lands in Messenger: set `Platform: "facebook"` on `AutomationCreateParams`, or `FacebookPostID` for a Page post published outside OmniSocials. On a post, `CommentDMAutomationInput{Platforms: []string{"instagram", "facebook"}, ...}` makes one automation per channel with the same keywords and DM. Facebook has no story replies.
 
@@ -707,9 +722,89 @@ if list.Error != nil {
 
 With nil params (or an empty `Source`) the list reads the Pinterest catalog (with `Price`, `Currency`, `Availability` and `ItemID`) when the connection has catalog access, else the account's own Pins. Catalog access is given one time in the OmniSocials composer: Pinterest options, Add products, Connect catalog. `Source: "pins"` scans up to 250 Pins per call, so `Products` can be empty while `Bookmark` is set; call again with `&omnisocials.PinterestProductListParams{Bookmark: *list.Bookmark}`. To check one Pin id or Pin link before you post, call `client.Pinterest.ValidateProduct(ctx, "813744226420795884")`. On `Posts.Update` the `Pinterest` map replaces the stored one, so leave `product_tags` out to remove the tags.
 
+## Ads
+
+Boost a published post or create a new ad on Meta, Pinterest, TikTok, LinkedIn, X and Google. Ads spend real money, so every call that starts or raises spend asks for the amount again: `Ads.Activate`, `Ads.ActivateMulti`, `Ads.Drafts.Launch` and a budget raise through `Ads.Update`. Show the person the amount first and pass it only after they agree. These calls (and `Ads.Resume`) are not retried after a 5xx or a connection error, because the first attempt may have started the ad: read the campaign or the draft to see what happened. A 429 is still retried.
+
+The `ads:read` and `ads:write` scopes are opt-in: create the API key with **Ads** switched on (Settings, API). A key without them gets a `*PermissionDeniedError` with code `insufficient_scope`. Ad accounts are connected and picked in the OmniSocials dashboard. Budgets are in major units (10 = 10 EUR) in the ad account's currency. Campaign and ad account ids are `omnisocials.AdID` values; the API may send them as numbers or as strings, and both decode.
+
+### Create an ad (draft, then launch)
+
+```go
+caps, err := client.Ads.Capabilities(ctx)
+fmt.Println(caps.Data.CreateNetworks, caps.Data.NetworkStates)
+
+draft, err := client.Ads.Drafts.Create(ctx, &omnisocials.AdDraftParams{
+	Name:      "Autumn sale",
+	Objective: "traffic",
+	Platforms: []string{"meta", "linkedin"},
+	Budget:    omnisocials.AdBudget{Amount: 10, Currency: "EUR"},
+	Schedule:  &omnisocials.AdDraftSchedule{DurationDays: omnisocials.Int(7)},
+	Targeting: omnisocials.AdDraftTargeting{
+		Countries:         []string{"NL", "BE"},
+		AutomaticAudience: omnisocials.Bool(true),
+	},
+	Ads: []omnisocials.AdDraftAd{{
+		Media:       []omnisocials.AdMediaFile{{URL: "https://example.com/sale.jpg", Type: "image", Width: 1080, Height: 1350}},
+		PrimaryText: "30% off everything this week",
+		Headline:    "Autumn sale",
+		CTA:         "shop_now",
+		Link:        "https://example.com/sale",
+	}},
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+// A draft spends nothing. Hand draft.Data.ReviewURL to the person, or start
+// it after they confirmed 10 EUR a day per network:
+launch, err := client.Ads.Drafts.Launch(ctx, draft.Data.GroupID, &omnisocials.AdDraftLaunchParams{
+	ConfirmBudgetAmount: 10,
+})
+if err != nil {
+	// Not retried after a 5xx or a dropped connection: read the draft to see what started.
+	log.Fatal(err)
+}
+for _, r := range launch.Data.Results {
+	fmt.Println(r.Platform, r.OK, r.Error)
+}
+```
+
+A draft needs no ad account; `client.Ads.Drafts.AttachAccount(ctx, groupID, &omnisocials.AdDraftAccountParams{Platform: "meta", AdAccountID: id})` sets one, and `Campaigns[].Readiness` says what still stops a network. `Ads.Drafts.Update` replaces the draft with the full body (`PUT`). On Meta an ad can carry a second upright 9:16 file for Stories and Reels: `PlacementMedia: &omnisocials.AdPlacementMedia{StoriesReels: &omnisocials.AdMediaFile{URL: "...", Type: "image"}}`.
+
+### Boost a post
+
+```go
+accounts, err := client.Ads.ListAccounts(ctx)
+var meta *omnisocials.AdAccount
+for i, a := range accounts.Data {
+	if a.Platform == "meta" && a.IsSelected {
+		meta = &accounts.Data[i]
+		break
+	}
+}
+
+currency := "EUR"
+if meta.AccountInfo != nil && meta.AccountInfo.Currency != "" {
+	currency = meta.AccountInfo.Currency
+}
+
+boost, err := client.Ads.Boost(ctx, &omnisocials.AdBoostParams{
+	PostID:      "12345",
+	AdAccountID: meta.ID,
+	Budget:      omnisocials.AdBudget{Type: "daily", Amount: 5, Currency: currency},
+	Targeting:   map[string]any{"countries": []string{"NL"}},
+})
+
+// The boost is a draft. Start it only after the person confirmed 5 a day:
+_, err = client.Ads.Activate(ctx, boost.Data.ID, 5)
+```
+
+`client.Ads.BoostMulti` makes one draft boost per ad account (up to 10, the same budget each). `client.Ads.Suggestions` lists posts that do better than your median, `client.Ads.Overview` the totals, and `client.Ads.List`, `Get`, `Pause`, `Resume` and `Delete` manage campaigns. Keyword ideas through the connected Google Ads account: `client.Ads.ResearchKeywords(ctx, &omnisocials.AdKeywordResearchParams{Keywords: []string{"running shoes"}, Country: "NL"})` and `client.Ads.KeywordMetrics(ctx, &omnisocials.AdKeywordMetricsParams{Keywords: ...})`.
+
 ## Webhooks
 
-Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`.
+Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`. `ad.status_changed` fires when an ad campaign changes status (for example `pending_review` to `active` or `rejected`); its `data` is the campaign, not a post: decode it into `omnisocials.AdStatusChangedEventData` (`CampaignID`, `Name`, `Platform`, `CampaignType`, `Status`, `PreviousStatus`, `ExternalCampaignID`, `Budget`).
 
 ### Manage endpoints
 
@@ -736,6 +831,7 @@ Every delivery is signed with your webhook secret. The `X-OmniSocials-Signature`
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -781,6 +877,14 @@ func main() {
 		case "post.rejected":
 			approval, _ := data["approval"].(map[string]any)
 			log.Println("Rejected:", data["post_id"], approval["reason"])
+		case "ad.status_changed":
+			// The data is the campaign, not a post.
+			var ad struct {
+				Data omnisocials.AdStatusChangedEventData `json:"data"`
+			}
+			if err := json.Unmarshal(payload, &ad); err == nil {
+				log.Println("Ad:", ad.Data.CampaignID, ad.Data.Status)
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 	})
@@ -830,8 +934,9 @@ _, err = client.Inbox.Hide(ctx, thread.Data[0].ID, true)
 liked, err := client.Inbox.Like(ctx, thread.Data[0].ID, true)
 fmt.Println(*liked.Data.Liked) // true
 
-// Delete a comment outright (Facebook, Instagram, TikTok; YouTube: hide instead).
-// Replies under it go with it; their ids come back as RemovedReplyIDs.
+// Delete a comment outright, or one of your own replies (Facebook, Instagram,
+// TikTok; YouTube: hide instead). Replies under it go with it; their ids come
+// back as RemovedReplyIDs.
 deleted, err := client.Inbox.DeleteMessage(ctx, thread.Data[0].ID)
 fmt.Println(deleted.Data.RemovedReplyIDs)
 ```
@@ -881,6 +986,47 @@ if errors.As(err, &apiErr) {
 	}
 }
 ```
+
+## Limits and feature requests
+
+`client.Limits.List` lists what OmniSocials cannot do, why (`Says`) and what to do instead (`Instead`): platform rules, features not built yet, features that work in the OmniSocials app only. Read it before you tell a person that something is not possible. When the person still wants a `Requestable` entry, send a feature request with its `LimitID`. The request is stored for the person who owns the key; they see it in OmniSocials (Settings, Request a feature) and get an email when its status changes. Works with every key, no scope needed.
+
+```go
+limits, err := client.Limits.List(ctx, &omnisocials.LimitListParams{Platform: "telegram"}) // Area: "posts", "inbox", ...
+if err != nil {
+	log.Fatal(err)
+}
+for _, l := range limits.Data {
+	fmt.Println(l.ID, l.Says, l.Requestable) // l.Instead is a *string
+}
+
+res, err := client.FeatureRequests.Create(ctx, &omnisocials.FeatureRequestCreateParams{
+	Summary:  "Post our daily update to the Announcements topic of our Telegram group, not to the whole group.",
+	Platform: "telegram",
+	LimitID:  "telegram.forum_topics",
+})
+var apiErr *omnisocials.APIError
+switch {
+case errors.As(err, &apiErr) && apiErr.Code == "not_requestable":
+	// A platform rule or a choice of OmniSocials: nothing was stored. The
+	// message gives the reason and what to do instead (the entry itself is
+	// in apiErr.Body under error.limit).
+	fmt.Println(apiErr.Message)
+case err != nil:
+	log.Fatal(err)
+case res.Outcome == omnisocials.FeatureRequestCreated:
+	fmt.Println("sent, request", res.Data.ID)
+default:
+	// FeatureRequestVoted: a vote on your organisation's open request.
+	// FeatureRequestAlreadyRequested: you asked before; res.Data is that request.
+	fmt.Println(res.Outcome, res.Data.ID, res.Data.Status)
+}
+
+mine, err := client.FeatureRequests.List(ctx)                // newest first, at most 50
+one, err := client.FeatureRequests.Get(ctx, mine.Data[0].ID) // Status, TeamAnswer, TeamReplies
+```
+
+A `Limit` has `ID`, `Kind` (one of `omnisocials.LimitKinds`: `platform`, `by_design`, `not_built`, `beta`, `dashboard_only`, `needs_setup`), `KindLabel`, `Area`, `Platforms`, `Title`, `Says`, `Instead` and `Requestable` (false for `platform` and `by_design`); `LimitsResponse.Kinds` holds a label per kind. A `FeatureRequest` carries `Status` (`open`, `in_progress`, `completed`, `declined`), `VotesCount`, `TeamAnswer` and `TeamReplies`. `Summary` is 10 to 1000 characters (what the person wants to do and why), `Title` at most 120 (made from the summary when empty); `Area` is one of `omnisocials.LimitAreas`. Errors: `400 invalid_summary` / `invalid_title` / `invalid_platform` / `invalid_area` / `unknown_limit`, `409 not_requestable`, `429 too_many_requests` (10 an hour per person, a `*RateLimitError`), and `404 not_found` on `Get`.
 
 ## Health
 

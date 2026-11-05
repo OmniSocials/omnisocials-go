@@ -796,6 +796,16 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		// Automations (6)
 		client.Automations.List, client.Automations.Get, client.Automations.Create,
 		client.Automations.Update, client.Automations.Delete, client.Automations.ListEvents,
+		// Ads (17)
+		client.Ads.ListAccounts, client.Ads.Capabilities, client.Ads.List, client.Ads.Get,
+		client.Ads.Boost, client.Ads.BoostMulti, client.Ads.Create, client.Ads.Update,
+		client.Ads.Activate, client.Ads.ActivateMulti, client.Ads.Pause, client.Ads.Resume,
+		client.Ads.Delete, client.Ads.Overview, client.Ads.Suggestions,
+		client.Ads.ResearchKeywords, client.Ads.KeywordMetrics,
+		// Ads drafts (7)
+		client.Ads.Drafts.Defaults, client.Ads.Drafts.Create, client.Ads.Drafts.Get,
+		client.Ads.Drafts.Update, client.Ads.Drafts.Delete, client.Ads.Drafts.AttachAccount,
+		client.Ads.Drafts.Launch,
 		// Webhooks (6)
 		client.Webhooks.List, client.Webhooks.Get, client.Webhooks.Create,
 		client.Webhooks.Update, client.Webhooks.Delete, client.Webhooks.RotateSecret,

@@ -42,6 +42,51 @@ func TestVerifyWebhookSignatureRoundTrip(t *testing.T) {
 	}
 }
 
+// For 24 hours after a secret rotation a delivery also carries
+// X-OmniSocials-Signature-Previous: the same scheme, signed with the OLD
+// secret. The new secret fails on it; the old secret verifies it.
+func TestVerifyWebhookSignaturePreviousHeaderWithOldSecret(t *testing.T) {
+	newSecret, oldSecret := "whsec_new_secret", "whsec_old_secret"
+	timestamp := time.Now().Unix()
+	current := signLikeDispatcher(newSecret, timestamp, testEventBody)
+	previous := signLikeDispatcher(oldSecret, timestamp, testEventBody)
+
+	if _, err := VerifyWebhookSignature([]byte(testEventBody), previous, newSecret, 0); err == nil {
+		t.Fatal("the new secret must not verify the Previous header")
+	}
+	if _, err := VerifyWebhookSignature([]byte(testEventBody), current, oldSecret, 0); err == nil {
+		t.Fatal("the old secret must not verify the current header")
+	}
+	event, err := VerifyWebhookSignature([]byte(testEventBody), previous, oldSecret, 0)
+	if err != nil {
+		t.Fatalf("the Previous header must verify with the old secret: %v", err)
+	}
+	if event["id"] != "evt_123" {
+		t.Fatalf("unexpected event: %v", event)
+	}
+}
+
+func TestWebhookWorkspaceIDDecodes(t *testing.T) {
+	var list ListResponse[Webhook]
+	raw := `{"data":[
+		{"id":"5","url":"https://example.com/a","events":["post.published"],"workspace_id":1000401,"is_active":true,"last_triggered_at":null,"failure_count":0,"last_failure":null,"created_at":"2026-11-06T10:00:00.000Z"},
+		{"id":"6","url":"https://example.com/b","events":["post.failed"],"workspace_id":null,"is_active":false,"last_triggered_at":null,"failure_count":0,
+		 "last_failure":{"at":"2026-11-06T11:00:00.000Z","status":null,"error":"The person who set up this webhook no longer has access to the organisation.","attempts":0},"created_at":"2026-11-06T10:00:00.000Z"}]}`
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if list.Data[0].WorkspaceID == nil || *list.Data[0].WorkspaceID != 1000401 {
+		t.Fatalf("expected workspace_id 1000401, got %v", list.Data[0].WorkspaceID)
+	}
+	off := list.Data[1]
+	if off.WorkspaceID != nil {
+		t.Fatalf("expected nil workspace_id for an organisation-wide webhook, got %d", *off.WorkspaceID)
+	}
+	if off.IsActive || off.LastFailure == nil || off.LastFailure.Status != nil || off.LastFailure.Attempts != 0 || off.LastFailure.Error == "" {
+		t.Fatalf("unexpected switched-off webhook: %+v", off)
+	}
+}
+
 func TestVerifyWebhookSignatureRejectedEventKeepsApproval(t *testing.T) {
 	secret := "whsec_test_secret"
 	body := `{"id":"evt_456","type":"post.rejected","created_at":"2026-10-02T09:00:05.000Z","data":{"post_id":"123456","workspace_id":789,"status":"rejected","post_type":"Post","scheduled_at":"2026-10-03T14:00:00.000Z","published_at":null,"targets":[],"approval":{"status":"rejected","decided_by":"c4a09e1d","reason":"Wrong product photo"}}}`

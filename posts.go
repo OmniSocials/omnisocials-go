@@ -376,11 +376,26 @@ type PostRejectResult struct {
 	Message        string `json:"message,omitempty"`
 }
 
+// PostApproveParams is the optional request body for Posts.Approve.
+type PostApproveParams struct {
+	// StepOrder is the workflow step you reviewed: CurrentStep of
+	// Posts.GetApproval. When the review is on another step now, nothing is
+	// approved and the call returns a 409 *APIError with Code
+	// "step_changed" (the step the review is on now is
+	// error.current_step_order in its Body). A whole number from 1, else 400
+	// validation_error. 0 leaves it out: the call then acts on whatever
+	// step is current.
+	StepOrder int `json:"step_order,omitempty"`
+}
+
 // PostRejectParams is the optional request body for Posts.Reject.
 type PostRejectParams struct {
 	// Comment is shown to the requester and other approvers in the post's
-	// review thread. Optional.
+	// review thread. Optional, at most 2000 characters.
 	Comment string `json:"comment,omitempty"`
+	// StepOrder is the workflow step you reviewed, as on PostApproveParams.
+	// 0 leaves it out.
+	StepOrder int `json:"step_order,omitempty"`
 }
 
 // PostApprovalUser is a person named in a post's approval review.
@@ -568,6 +583,12 @@ func (s *PostsService) RecentPlatform(ctx context.Context, params *RecentPlatfor
 // channel decision on a feed image whose ratio is outside what the channel
 // shows uncropped (Action "cropped", "kept" or "crop_failed");
 // PostCreateParams.MediaFit steers it per channel.
+//
+// A media id that is still processing (a large video is checked and
+// converted after upload) returns a 409 *APIError with Code
+// "media_processing" and nothing is created: wait until Media.Get says
+// "ready", then send the same request again. A file whose processing failed
+// returns 400 "invalid_media": upload it again.
 func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create", jsonBody(params), &out); err != nil {
@@ -579,7 +600,8 @@ func (s *PostsService) Create(ctx context.Context, params *PostCreateParams) (*I
 // CreateAndPublish calls `POST /posts/create-and-publish`: create a post and
 // publish it immediately. See Create for the Warnings field on X link posts
 // and the 402 "x_credits_insufficient" schedule-time credit gate (it also
-// applies here, since this is a non-draft create).
+// applies here, since this is a non-draft create), and for the 409
+// "media_processing" / 400 "invalid_media" answers.
 func (s *PostsService) CreateAndPublish(ctx context.Context, params *PostCreateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/create-and-publish", jsonBody(params), &out); err != nil {
@@ -595,6 +617,14 @@ func (s *PostsService) CreateAndPublish(ctx context.Context, params *PostCreateP
 // field can carry "image_fit" entries when the update changes the images or
 // MediaFit (MediaFit alone re-decides the stored images; "keep" gives the
 // original back).
+//
+// 409 answers, where nothing is changed: "post_publishing" while the post
+// is publishing (status "posting") or a retry publishes one of its channels
+// (poll Get until "published", "warning" or "failed"; an update with only
+// Tags still works); "review_required" when changes were requested on the
+// post (ApprovalStatus "rejected") and the update would schedule it (it
+// needs a new review: create it again with ApprovalWorkflowID; saving it as
+// a draft works); "media_processing" as on Create.
 func (s *PostsService) Update(ctx context.Context, id string, params *PostUpdateParams) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.patch(ctx, "/posts/"+url.PathEscape(id), jsonBody(params), &out); err != nil {
@@ -603,7 +633,12 @@ func (s *PostsService) Update(ctx context.Context, id string, params *PostUpdate
 	return &out, nil
 }
 
-// Delete calls `DELETE /posts/:id`: remove a post from OmniSocials (204 on success). The live post stays on the platform.
+// Delete calls `DELETE /posts/:id`: remove a post from OmniSocials (204 on
+// success). The live post stays on the platform. While the post is
+// publishing (status "posting") or a retry publishes one of its channels,
+// the error is a 409 *APIError with Code "post_publishing" and nothing is
+// deleted: poll Get until "published", "warning" or "failed", then delete
+// it.
 func (s *PostsService) Delete(ctx context.Context, id string) error {
 	return s.client.del(ctx, "/posts/"+url.PathEscape(id))
 }
@@ -611,7 +646,10 @@ func (s *PostsService) Delete(ctx context.Context, id string) error {
 // Publish calls `POST /posts/:id/publish`: publish a draft or scheduled post
 // now. See Create for the 402 "x_credits_insufficient" schedule-time credit
 // gate: it also runs here as a pre-flight check before an X link post is
-// queued to publish.
+// queued to publish. A post on which changes were requested in its approval
+// workflow (ApprovalStatus "rejected") returns a 409 "review_required"
+// *APIError: it publishes only after a new review (create it again with
+// ApprovalWorkflowID).
 func (s *PostsService) Publish(ctx context.Context, id string) (*ItemResponse[Post], error) {
 	var out ItemResponse[Post]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/publish", nil, &out); err != nil {
@@ -624,7 +662,10 @@ func (s *PostsService) Publish(ctx context.Context, id string) (*ItemResponse[Po
 // "failed" or "warning" (partially failed) post, on the same post. Only the
 // platforms that failed are re-published; platforms that already succeeded
 // are never posted again. Asynchronous: a 200 means the retry is queued -
-// poll Get for the outcome. Max 3 retries per platform.
+// poll Get for the outcome. Max 3 retries per platform. While another retry
+// runs (a second request, the dashboard, the automatic retry) the error is a
+// 409 "retry_in_progress" *APIError and nothing is queued: poll Get and retry
+// once the post is "failed" or "warning" again.
 func (s *PostsService) Retry(ctx context.Context, id string) (*ItemResponse[PostRetryResult], error) {
 	var out ItemResponse[PostRetryResult]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/retry", nil, &out); err != nil {
@@ -635,15 +676,28 @@ func (s *PostsService) Retry(ctx context.Context, id string) (*ItemResponse[Post
 
 // Approve calls `POST /posts/:id/approve`: approve the current step of a
 // post's approval workflow, on behalf of the user who owns this API key.
-// That user must be a listed approver for the workflow's CURRENT step -
+// That user must be a listed approver for the workflow's CURRENT step:
 // steps approve in order, so an approver on a later step gets a 403
 // "forbidden" error until earlier steps clear. Only works on a post with
 // ApprovalStatus "pending". If this is the last step, the post finalizes
 // immediately ("scheduled" or "posting"); otherwise it stays "in_approval"
 // and the next step's approvers are notified.
-func (s *PostsService) Approve(ctx context.Context, id string) (*ItemResponse[PostApproveResult], error) {
+//
+// params is optional: pass &PostApproveParams{StepOrder: n} with n the
+// CurrentStep of GetApproval, the step you reviewed. When the review is on
+// another step now (somebody decided since you read it, or a retried call
+// already went through), nothing is approved and the error is a 409
+// *APIError with Code "step_changed"; error.current_step_order in its Body
+// is the step the review is on now. Read the approval again before you
+// decide. Without a step the call approves whatever step is current, so a
+// retry after a timeout can approve the next step too.
+func (s *PostsService) Approve(ctx context.Context, id string, params ...*PostApproveParams) (*ItemResponse[PostApproveResult], error) {
+	var body any
+	if len(params) > 0 && params[0] != nil && params[0].StepOrder != 0 {
+		body = params[0]
+	}
 	var out ItemResponse[PostApproveResult]
-	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/approve", nil, &out); err != nil {
+	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/approve", body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -652,9 +706,12 @@ func (s *PostsService) Approve(ctx context.Context, id string) (*ItemResponse[Po
 // Reject calls `POST /posts/:id/reject`: reject a post's approval workflow,
 // on behalf of the user who owns this API key. Same approver requirement as
 // Approve. Unlike approval, a rejection stops the WHOLE workflow immediately
-// (not just the current step) - the post's status becomes "rejected".
+// (not just the current step): the post's status becomes "rejected".
 // params may be nil (no comment) or carry an optional Comment shown to the
-// requester and other approvers.
+// requester and other approvers, and an optional StepOrder (the CurrentStep
+// of GetApproval). When the review moved on, nothing is rejected and the
+// error is a 409 "step_changed" *APIError with current_step_order in its
+// Body.
 func (s *PostsService) Reject(ctx context.Context, id string, params *PostRejectParams) (*ItemResponse[PostRejectResult], error) {
 	var out ItemResponse[PostRejectResult]
 	if err := s.client.post(ctx, "/posts/"+url.PathEscape(id)+"/reject", jsonBody(params), &out); err != nil {

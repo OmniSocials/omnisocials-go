@@ -371,14 +371,39 @@ _, err = client.Posts.Retry(ctx, one.Data.ID)   // retry only the failed platfor
 err = client.Posts.Delete(ctx, one.Data.ID)     // 204 on success
 ```
 
+These calls return a 409 `*APIError` and change nothing when the post is not in a state for them:
+
+- `post_publishing`: `Update` or `Delete` while the post is publishing (status `posting`) or a retry publishes one of its channels. Poll `Get` until the status is `published`, `warning` or `failed`. An `Update` with only `Tags` still works.
+- `review_required`: changes were requested on the post (`ApprovalStatus` `rejected`), so `Publish`, or an `Update` that would schedule it, is refused. It needs a new review: create it again with `ApprovalWorkflowID`. Saving it as a draft works.
+- `retry_in_progress`: `Retry` while another retry of the post runs.
+- `media_processing`: a media id in `Create`, `CreateAndPublish` or `Update` is still processing. Wait until `client.Media.Get` says `ready`, then send the same request again. A file whose processing failed returns `400 invalid_media`: upload it again.
+
 ### Approve or reject a post
 
 ```go
-_, err = client.Posts.Approve(ctx, one.Data.ID)                                              // approve the current approval-workflow step
-_, err = client.Posts.Reject(ctx, one.Data.ID, &omnisocials.PostRejectParams{Comment: "Wrong CTA link, please fix."}) // reject and stop the workflow (comment optional, pass nil for none)
+// Read the step you review first, then name it on the decision.
+review, err := client.Posts.GetApproval(ctx, one.Data.ID)
+step := 0 // 0 leaves step_order out
+if review.Data.CurrentStep != nil {
+	step = *review.Data.CurrentStep
+}
+
+_, err = client.Posts.Approve(ctx, one.Data.ID, &omnisocials.PostApproveParams{StepOrder: step}) // approve the step you reviewed
+// or: reject and stop the workflow (comment optional, pass nil for none)
+// _, err = client.Posts.Reject(ctx, one.Data.ID, &omnisocials.PostRejectParams{Comment: "Wrong CTA link, please fix.", StepOrder: step})
+
+var apiErr *omnisocials.APIError
+if errors.As(err, &apiErr) && apiErr.Code == "step_changed" {
+	// Somebody decided since you read it: nothing was decided. Read the approval again.
+	body, _ := apiErr.Body.(map[string]any)
+	errObj, _ := body["error"].(map[string]any)
+	log.Println("The review is on step", errObj["current_step_order"])
+}
 ```
 
-Only works on a post with `ApprovalStatus: "pending"` (`Status: "in_approval"`). Both act on behalf of the user who owns the API key, who must be a listed approver for the workflow's CURRENT step — steps approve in order, so being an approver on a later step is not enough yet (returns a 403 `forbidden` error). Approving the last step finalizes the post (`scheduled` or `posting`); rejecting stops the whole workflow immediately, not just the current step.
+Only works on a post with `ApprovalStatus: "pending"` (`Status: "in_approval"`). Both act on behalf of the user who owns the API key, who must be a listed approver for the workflow's CURRENT step. Steps approve in order, so being an approver on a later step is not enough yet (returns a 403 `forbidden` error). Approving the last step finalizes the post (`scheduled` or `posting`); rejecting stops the whole workflow immediately, not just the current step.
+
+`StepOrder` is optional: the `CurrentStep` of `GetApproval`. When the review is on another step now (somebody decided since you read it, or a retried call already went through), nothing is decided and the call returns a 409 `*APIError` with code `step_changed` and `error.current_step_order` in its `Body`, the step the review is on now. Without it the call acts on whatever step is current, so a retry after a timeout could approve the next step too. `client.Posts.Approve(ctx, id)` without params still works.
 
 ### Read the approval review
 
@@ -423,7 +448,7 @@ upload, err := client.Media.UploadFromURL(ctx, &omnisocials.MediaUploadFromURLPa
 fmt.Println(upload.Data.ID, upload.Compatibility)
 ```
 
-Videos over 100MB are processed in the background and come back with status `"processing"`. Every upload response includes a `Compatibility` block listing connected platforms that would reject the file.
+Videos over 100MB are processed in the background and come back with status `"processing"`; when such a file cannot be queued, the call returns a 503 `processing_unavailable` error (send the same request again in a minute). Every upload response includes a `Compatibility` block listing connected platforms that would reject the file.
 
 ### Upload a local file (multipart)
 
@@ -616,6 +641,8 @@ for _, account := range accounts.Data {
 ig, err := client.Accounts.Get(ctx, accounts.Data[0].ID)
 ```
 
+`Status` is `active` or `needs_reconnect` (the token was revoked or expired; Bluesky also when its sign-in could not be renewed). Posts to a `needs_reconnect` account fail until it is reconnected in the OmniSocials app. OmniSocials Connect customer workspaces can also show `pick_pending` (Facebook, Connect customers only: no Page chosen yet; `PickPending` is true then).
+
 ## Analytics
 
 ```go
@@ -724,11 +751,11 @@ With nil params (or an empty `Source`) the list reads the Pinterest catalog (wit
 
 ## Ads
 
-Boost a published post or create a new ad on Meta, Pinterest, TikTok, LinkedIn, X and Google. Ads spend real money, so every call that starts or raises spend asks for the amount again: `Ads.Activate`, `Ads.ActivateMulti`, `Ads.Drafts.Launch` and a budget raise through `Ads.Update`. Show the person the amount first and pass it only after they agree. These calls (and `Ads.Resume`) are not retried after a 5xx or a connection error, because the first attempt may have started the ad: read the campaign or the draft to see what happened. A 429 is still retried.
+Boost a published post or create a new ad on Meta, Pinterest, TikTok, LinkedIn, X and Google. Boosts and new ads are drafts: your code writes the draft, and the person who pays sees the amount and starts the ad in OmniSocials from the draft's `ReviewURL`. A key starts and raises spend itself only with the opt-in **Start ads** switch (scope `ads:spend`). Without it `Ads.Activate`, `Ads.ActivateMulti`, `Ads.Resume`, `Ads.Drafts.Launch`, a budget raise or any change of a campaign that reached the network through `Ads.Update`, and the parity calls that switch something on or raise a budget answer `403 start_in_app` (a `*PermissionDeniedError`), and the error message names the page where the person does it. Google (`APIDraftOnly` of `Ads.Capabilities`) always stops at the draft, also with `ads:spend`. `Ads.Pause` and `Ads.Delete` stay open, except on the networks in `APIStopInApp` (Google), where a campaign that reached the network also answers `403 start_in_app`. Only a paused campaign resumes (`409 not_paused`). The calls that start or raise spend repeat the amount (`ConfirmBudgetAmount`) and are not retried after a 5xx or a connection error, only after a 429.
 
-The `ads:read` and `ads:write` scopes are opt-in: create the API key with **Ads** switched on (Settings, API). A key without them gets a `*PermissionDeniedError` with code `insufficient_scope`. Ad accounts are connected and picked in the OmniSocials dashboard. Budgets are in major units (10 = 10 EUR) in the ad account's currency. Campaign and ad account ids are `omnisocials.AdID` values; the API may send them as numbers or as strings, and both decode.
+The `ads:read` and `ads:write` scopes are opt-in: create the API key with **Ads** switched on (Settings, API). A key without them gets a `*PermissionDeniedError` with code `insufficient_scope`. `ads:spend` is the **Start ads** switch under it, offered only to a person with `manage_ads`. Ad accounts are connected and picked in the OmniSocials dashboard. Budgets are in major units (10 = 10 EUR) in the ad account's currency: a draft whose `Budget.Currency` differs from the attached ad account's currency answers `400 currency_mismatch`. Ads errors may carry `param`, the field at fault: read it from `APIError.Body` (`error.param`). Campaign and ad account ids are `omnisocials.AdID` values; the API may send them as numbers or as strings, and both decode.
 
-### Create an ad (draft, then launch)
+### Create an ad (a draft the person starts)
 
 ```go
 caps, err := client.Ads.Capabilities(ctx)
@@ -756,19 +783,11 @@ if err != nil {
 	log.Fatal(err)
 }
 
-// A draft spends nothing. Hand draft.Data.ReviewURL to the person, or start
-// it after they confirmed 10 EUR a day per network:
-launch, err := client.Ads.Drafts.Launch(ctx, draft.Data.GroupID, &omnisocials.AdDraftLaunchParams{
-	ConfirmBudgetAmount: 10,
-})
-if err != nil {
-	// Not retried after a 5xx or a dropped connection: read the draft to see what started.
-	log.Fatal(err)
-}
-for _, r := range launch.Data.Results {
-	fmt.Println(r.Platform, r.OK, r.Error)
-}
+// A draft spends nothing. The person checks it and starts it in OmniSocials:
+fmt.Println("Check and start your ad:", draft.Data.ReviewURL)
 ```
+
+With a key that has `ads:spend`, `client.Ads.Drafts.Launch(ctx, draft.Data.GroupID, &omnisocials.AdDraftLaunchParams{ConfirmBudgetAmount: 10})` starts the draft after the person agreed to the amount; Google is skipped with code `start_in_app`. Without `ads:spend` the call answers `403 start_in_app`.
 
 A draft needs no ad account; `client.Ads.Drafts.AttachAccount(ctx, groupID, &omnisocials.AdDraftAccountParams{Platform: "meta", AdAccountID: id})` sets one, and `Campaigns[].Readiness` says what still stops a network. `Ads.Drafts.Update` replaces the draft with the full body (`PUT`). On Meta an ad can carry a second upright 9:16 file for Stories and Reels: `PlacementMedia: &omnisocials.AdPlacementMedia{StoriesReels: &omnisocials.AdMediaFile{URL: "...", Type: "image"}}`.
 
@@ -796,15 +815,26 @@ boost, err := client.Ads.Boost(ctx, &omnisocials.AdBoostParams{
 	Targeting:   map[string]any{"countries": []string{"NL"}},
 })
 
-// The boost is a draft. Start it only after the person confirmed 5 a day:
-_, err = client.Ads.Activate(ctx, boost.Data.ID, 5)
+// The boost is a draft: the person starts it in OmniSocials.
+fmt.Println(boost.Data.Status) // "draft"
 ```
 
-`client.Ads.BoostMulti` makes one draft boost per ad account (up to 10, the same budget each). `client.Ads.Suggestions` lists posts that do better than your median, `client.Ads.Overview` the totals, and `client.Ads.List`, `Get`, `Pause`, `Resume` and `Delete` manage campaigns. Keyword ideas through the connected Google Ads account: `client.Ads.ResearchKeywords(ctx, &omnisocials.AdKeywordResearchParams{Keywords: []string{"running shoes"}, Country: "NL"})` and `client.Ads.KeywordMetrics(ctx, &omnisocials.AdKeywordMetricsParams{Keywords: ...})`.
+`client.Ads.BoostMulti` makes one draft boost per ad account (up to 10, the same budget each). `client.Ads.Suggestions` lists posts that do better than your median, `client.Ads.Overview` the totals (`Totals.Spend` is nil when the campaigns use more than one currency: read `TotalsByCurrency`), and `client.Ads.List`, `Get`, `Pause` and `Delete` manage campaigns. Keyword ideas through the connected Google Ads account: `client.Ads.ResearchKeywords(ctx, &omnisocials.AdKeywordResearchParams{Keywords: []string{"running shoes"}, Country: "NL"})` and `client.Ads.KeywordMetrics(ctx, &omnisocials.AdKeywordMetricsParams{Keywords: ...})`.
+
+### More of the Ads API
+
+Sub-services cover the rest of the Ads API: `Objects` (the tree of an ad account, also campaigns made outside OmniSocials, and their import), `CampaignAds`, `Comments`, `Targeting`, `Audiences`, `LeadForms`, `Leads`, `Conversions`, `Insights`, `Reports`, `Rules`, `Results`, `Media`, `Previews`, `Partnership`, `Accounts` (health, finance, settings, people), `ReachFrequency`, `Studies`, `BudgetSchedules` and `Google`, plus `Ads.BulkStatus` and `Ads.Duplicate`. A network without a feature answers `400 not_supported_on_network`; `Capabilities` lists `Features` and `TargetingTypes` per network. Every call that can start or raise spend takes the person's own amount and is not retried after a 5xx or a connection error: `Objects.Update`, `Objects.SetStatus`, `BulkStatus`, `CampaignAds.SetStatus`, `Rules.Create`, `Rules.Update`, `Rules.Undo`, `Accounts.UpdateSettings`, `ReachFrequency.Reserve` and `BudgetSchedules.Create`. Switching on, a budget or spend cap raise, a change of a campaign on the network (also `Objects.Duplicate`, `CampaignAds.Add` and `Studies.Create`) need a key with `ads:spend`: without it, and on Google always, they answer `403 start_in_app` with the page where a person does it in the app. A rule that switches on or raises a budget needs `ads:spend` too (else `403 rule_raises_spend`); a rule that notifies, pauses or lowers a budget works with `ads:write`, and no rule acts on Google. Pausing, deleting and archiving stay open, except on Google.
+
+```go
+interests, err := client.Ads.Targeting.Search(ctx, &omnisocials.AdTargetingSearchParams{
+	AdAccountID: meta.ID, Type: "interest", Q: "running",
+})
+// Use the ids in AdDraftTargeting.Networks["meta"].Include["interest"].
+```
 
 ## Webhooks
 
-Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`. `ad.status_changed` fires when an ad campaign changes status (for example `pending_review` to `active` or `rejected`); its `data` is the campaign, not a post: decode it into `omnisocials.AdStatusChangedEventData` (`CampaignID`, `Name`, `Platform`, `CampaignType`, `Status`, `PreviousStatus`, `ExternalCampaignID`, `Budget`).
+Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`. `ad.status_changed` fires when an ad campaign changes status (for example `pending_review` to `active` or `rejected`); its `data` is the campaign, not a post: decode it into `omnisocials.AdStatusChangedEventData` (`CampaignID`, `Name`, `Platform`, `CampaignType`, `Status`, `PreviousStatus`, `ExternalCampaignID`, `Budget`). The other ads events are listed in `omnisocials.AdsWebhookEvents` (`ad.created`, `ad.updated`, `ad.review`, `ad.delivery_issue`, `campaign.created`, `campaign.updated`, `campaign.budget`, `lead.received`, `ads.sync_failed`, `ads.sync_recovered`, `ads.initial_sync_completed`, `ad_rule.triggered`). Subscribing to `ad.status_changed` or any other ads event needs the `ads:read` scope on the key and `access_ads` for its person (`403 insufficient_scope` / `insufficient_permission`).
 
 ### Manage endpoints
 
@@ -819,9 +849,11 @@ _, err = client.Webhooks.List(ctx)
 _, err = client.Webhooks.Get(ctx, webhook.Data.ID)
 _, err = client.Webhooks.Update(ctx, webhook.Data.ID, &omnisocials.WebhookUpdateParams{IsActive: omnisocials.Bool(false)})
 rotated, err := client.Webhooks.RotateSecret(ctx, webhook.Data.ID)
-fmt.Println(rotated.Data.Secret) // the old secret stops working
+fmt.Println(rotated.Data.Secret) // the old secret keeps signing for 24 hours
 err = client.Webhooks.Delete(ctx, webhook.Data.ID)
 ```
+
+Every webhook carries `WorkspaceID`. `List` and `Get` also return the organisation-wide webhooks of the key's organisation (`WorkspaceID` nil, made in the OmniSocials dashboard; they receive the events of every workspace), and `Update`, `Delete` and `RotateSecret` work on them too. Webhooks you create through the API belong to the key's workspace. When the person behind a webhook loses access to the organisation or workspace, OmniSocials switches the webhook off: `IsActive` is false and `LastFailure.Error` says why. `Update` with `IsActive: omnisocials.Bool(true)` switches it on again.
 
 ### Verify deliveries (net/http example)
 
@@ -894,6 +926,25 @@ func main() {
 ```
 
 `VerifyWebhookSignature` uses a constant-time comparison, rejects timestamps older than the tolerance (replay protection), returns a `*WebhookVerificationError` on any failure, and returns the parsed event on success.
+
+### Rotate the secret without missing deliveries
+
+For 24 hours after `RotateSecret`, every delivery carries two headers: `X-OmniSocials-Signature`, signed with the new secret, and `X-OmniSocials-Signature-Previous`, signed with the old secret (same format, same timestamp and body). Verify the first with the new secret and, when that fails, the second with the old one:
+
+```go
+func verifyDelivery(payload []byte, h http.Header, newSecret, oldSecret string) (map[string]any, error) {
+	event, err := omnisocials.VerifyWebhookSignature(payload, h.Get("X-OmniSocials-Signature"), newSecret, 0)
+	if err == nil {
+		return event, nil
+	}
+	if previous := h.Get("X-OmniSocials-Signature-Previous"); previous != "" {
+		return omnisocials.VerifyWebhookSignature(payload, previous, oldSecret, 0)
+	}
+	return nil, err
+}
+```
+
+Rotating again within the 24 hours replaces the previous secret with the one you just rotated out.
 
 ## Inbox
 

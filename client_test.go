@@ -506,6 +506,81 @@ func TestPostsGetApproval(t *testing.T) {
 	}
 }
 
+func TestPostsApproveRejectStepOrder(t *testing.T) {
+	var gotPath, gotBody string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotPath, gotBody = r.URL.Path, string(raw)
+		if strings.Contains(gotBody, `"step_order":1`) {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, `{"error":{"code":"step_changed","message":"The review is on step 2 now.","current_step_order":2}}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":{"id":"1024","status":"in_approval","approval_status":"pending"}}`)
+	}), WithMaxRetries(0))
+	ctx := context.Background()
+
+	// Old call shape: no params, no body.
+	if _, err := client.Posts.Approve(ctx, "1024"); err != nil {
+		t.Fatalf("Posts.Approve: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/posts/1024/approve") || gotBody != "" {
+		t.Fatalf("expected POST /posts/1024/approve without a body, got %s %q", gotPath, gotBody)
+	}
+	if _, err := client.Posts.Approve(ctx, "1024", nil); err != nil || gotBody != "" {
+		t.Fatalf("nil params must send no body, got %q (err %v)", gotBody, err)
+	}
+	if _, err := client.Posts.Approve(ctx, "1024", &PostApproveParams{StepOrder: 2}); err != nil {
+		t.Fatalf("Posts.Approve with StepOrder: %v", err)
+	}
+	if gotBody != `{"step_order":2}` {
+		t.Fatalf("expected {\"step_order\":2}, got %q", gotBody)
+	}
+
+	if _, err := client.Posts.Reject(ctx, "1024", &PostRejectParams{Comment: "Wrong CTA link"}); err != nil {
+		t.Fatalf("Posts.Reject: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/posts/1024/reject") || gotBody != `{"comment":"Wrong CTA link"}` {
+		t.Fatalf("unexpected reject request: %s %q", gotPath, gotBody)
+	}
+	if _, err := client.Posts.Reject(ctx, "1024", &PostRejectParams{Comment: "Wrong CTA link", StepOrder: 2}); err != nil {
+		t.Fatalf("Posts.Reject with StepOrder: %v", err)
+	}
+	if gotBody != `{"comment":"Wrong CTA link","step_order":2}` {
+		t.Fatalf("expected comment and step_order, got %q", gotBody)
+	}
+
+	_, err := client.Posts.Approve(ctx, "1024", &PostApproveParams{StepOrder: 1})
+	apiErr := assertErrorAs[*APIError](t, err)
+	if apiErr.Status != http.StatusConflict || apiErr.Code != "step_changed" {
+		t.Fatalf("expected 409 step_changed, got %d %s", apiErr.Status, apiErr.Code)
+	}
+	body, _ := apiErr.Body.(map[string]any)
+	errObj, _ := body["error"].(map[string]any)
+	if errObj["current_step_order"] != float64(2) {
+		t.Fatalf("expected current_step_order 2 in the body, got %v", body)
+	}
+}
+
+func TestAccountsListPickPending(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[
+			{"id":"facebook","platform":"facebook","username":"Sam Lee","display_name":"Sam Lee","profile_picture":null,"content_types":["post"],"status":"pick_pending","needs_reconnect":false,"pick_pending":true,"connected_at":null},
+			{"id":"bluesky","platform":"bluesky","username":"sam.bsky.social","display_name":"Sam","profile_picture":null,"content_types":["post"],"status":"needs_reconnect","needs_reconnect":true,"pick_pending":false,"reauth_reason":"The sign-in could not be renewed","connected_at":null}]}`)
+	}))
+	res, err := client.Accounts.List(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts.List: %v", err)
+	}
+	fb, bsky := res.Data[0], res.Data[1]
+	if fb.Status != "pick_pending" || !fb.PickPending || fb.NeedsReconnect {
+		t.Fatalf("unexpected Facebook account: %+v", fb)
+	}
+	if bsky.Status != "needs_reconnect" || !bsky.NeedsReconnect || bsky.PickPending {
+		t.Fatalf("unexpected Bluesky account: %+v", bsky)
+	}
+}
+
 func TestPinterestListProducts(t *testing.T) {
 	var gotMethod, gotPath, gotQuery string
 	body := `{"products":[{"pin_id":"813744226420795884","title":"Blue ribbed top","description":null,
@@ -796,9 +871,9 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		// Automations (6)
 		client.Automations.List, client.Automations.Get, client.Automations.Create,
 		client.Automations.Update, client.Automations.Delete, client.Automations.ListEvents,
-		// Ads (17)
+		// Ads (16)
 		client.Ads.ListAccounts, client.Ads.Capabilities, client.Ads.List, client.Ads.Get,
-		client.Ads.Boost, client.Ads.BoostMulti, client.Ads.Create, client.Ads.Update,
+		client.Ads.Boost, client.Ads.BoostMulti, client.Ads.Update,
 		client.Ads.Activate, client.Ads.ActivateMulti, client.Ads.Pause, client.Ads.Resume,
 		client.Ads.Delete, client.Ads.Overview, client.Ads.Suggestions,
 		client.Ads.ResearchKeywords, client.Ads.KeywordMetrics,

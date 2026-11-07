@@ -291,7 +291,9 @@ func (s *MediaService) Upload(ctx context.Context, params *MediaUploadParams) (*
 
 // UploadFromURL calls `POST /media/upload-from-url`: the server fetches a
 // public URL (files up to 1GB; large videos finish processing in the
-// background and come back with status "processing").
+// background and come back with status "processing"). A file over 100 MB
+// that could not be queued for processing returns a 503 *ServerError with
+// Code "processing_unavailable": send the same request again in a minute.
 func (s *MediaService) UploadFromURL(ctx context.Context, params *MediaUploadFromURLParams) (*MediaUploadResponse, error) {
 	var out MediaUploadResponse
 	if err := s.client.post(ctx, "/media/upload-from-url", jsonBody(params), &out); err != nil {

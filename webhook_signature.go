@@ -25,6 +25,13 @@ const DefaultWebhookTolerance = 5 * time.Minute
 // "{timestamp}.{rawBody}" using the webhook's signing secret. secret is the
 // webhook's signing secret (shown once on create / rotate-secret).
 //
+// Secret rotation: for 24 hours after Webhooks.RotateSecret, every delivery
+// carries X-OmniSocials-Signature (signed with the new secret) and
+// X-OmniSocials-Signature-Previous (signed with the old secret, same format,
+// same timestamp and body). To keep accepting deliveries while you switch
+// secrets, verify X-OmniSocials-Signature with the new secret and, when that
+// fails, verify X-OmniSocials-Signature-Previous with the old secret.
+//
 // tolerance is the maximum allowed age of the timestamp; deliveries older
 // than that are rejected as possible replays. Pass a non-positive tolerance
 // to use DefaultWebhookTolerance (5 minutes).

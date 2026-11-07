@@ -27,10 +27,19 @@ type Account struct {
 	// "story", "reel"].
 	ContentTypes []string `json:"content_types,omitempty"`
 	// Status is "active" while the OAuth token is healthy. It flips to
-	// "needs_reconnect" when the platform has revoked/expired the token;
-	// posts to this account will fail until the user reconnects.
+	// "needs_reconnect" when the platform has revoked/expired the token
+	// (Bluesky: the sign-in could not be renewed); posts to this account
+	// will fail until the user reconnects. "pick_pending" (Facebook,
+	// OmniSocials Connect customers only): the Facebook login manages
+	// several Pages and none is chosen yet; posts fail until the Page is
+	// chosen by connecting Facebook again and picking the Page.
 	Status         string `json:"status"`
 	NeedsReconnect bool   `json:"needs_reconnect"`
+	// PickPending is true when Status is "pick_pending" (Facebook,
+	// OmniSocials Connect customers only). Such an account cannot be posted
+	// to, and Username, DisplayName and
+	// ProfilePicture name the person who signed in, not a Page.
+	PickPending bool `json:"pick_pending"`
 	// ReauthReason is a short reason from the platform; only present when
 	// NeedsReconnect is true.
 	ReauthReason *string `json:"reauth_reason,omitempty"`

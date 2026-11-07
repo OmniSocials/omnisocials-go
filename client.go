@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.15.0"
+const Version = "0.16.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -192,7 +192,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.Audio = &AudioService{client: c}
 	c.Pinterest = &PinterestService{client: c}
 	c.Automations = &AutomationsService{client: c}
-	c.Ads = &AdsService{client: c, Drafts: &AdDraftsService{client: c}}
+	c.Ads = newAdsService(c)
 	c.Webhooks = &WebhooksService{client: c}
 	c.Inbox = &InboxService{client: c}
 	c.Limits = &LimitsService{client: c}

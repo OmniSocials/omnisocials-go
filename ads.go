@@ -12,26 +12,85 @@ import (
 // AdsService covers the /ads endpoints: boost a published post or create a
 // new ad on Meta, Pinterest, TikTok, LinkedIn, X and Google.
 //
-// Ads spend real money once a campaign starts. Boosts, campaigns and drafts
-// are created as drafts (no spend). Activate, ActivateMulti, Drafts.Launch
-// and a budget raise through Update start or raise spend, and each needs the
-// amount again as a confirmation. Show the person the amount and get their
-// yes first. These calls and Resume are not retried after a 5xx or a
-// connection error (only a 429 is), because the first attempt may have
-// started the ad: read the campaign or the draft to see what happened.
+// Ads spend real money once a campaign starts. Boosts and drafts are created
+// as drafts (no spend). Starting or raising spend needs a key with the
+// opt-in ads:spend scope ("Start ads", a second switch under "Ads"; its
+// creator needs manage_ads): Activate, ActivateMulti, Resume, Drafts.Launch,
+// a budget raise or any change of a campaign that reached the network
+// through Update, and the parity calls that switch something on or raise a
+// budget (see ads_parity.go). Each repeats the amount: show the person the
+// amount and get their yes first. Without ads:spend these calls answer 403
+// start_in_app with the page in the app where a person does it; on Google
+// (AdCapabilities.APIDraftOnly) they always do, also with ads:spend. Pause
+// and Delete stay open, except on the networks in
+// AdCapabilities.APIStopInApp (Google). The calls that start or raise spend
+// are not retried after a 5xx or a connection error (only a 429 is),
+// because the first attempt may have started the ad: read the campaign or
+// the draft to see what happened. Ads errors may carry `param` (the field at
+// fault): read it from APIError.Body (`error.param`).
 //
 // Budgets are in major currency units (10 = 10 EUR) in the ad account's
 // currency. Ad accounts are connected and picked in the OmniSocials
 // dashboard. The scopes are opt-in on the API key (the "Ads" switch):
 // ads:read for the reads, ads:write for the rest. A key without them gets a
-// 403 insufficient_scope.
+// 403 insufficient_scope. ads:spend (the "Start ads" switch under it) is
+// only for the calls that start or raise spend (see above).
 type AdsService struct {
 	client *Client
 
 	// Drafts covers /ads/drafts: "Create an ad" drafts, one campaign per
 	// network with the same ads. A draft never spends; Drafts.Launch starts
-	// it.
+	// it (a key with ads:spend), or a person does in the app from its
+	// ReviewURL.
 	Drafts *AdDraftsService
+
+	// The Ads API parity sub-services (2026-11-05, ads_parity.go).
+
+	// Objects covers the campaigns, ad sets and ads of an ad account (also
+	// the ones made outside OmniSocials) and their import.
+	Objects *AdObjectsService
+	// CampaignAds covers the ads of an OmniSocials campaign.
+	CampaignAds *AdCampaignAdsService
+	// Comments covers the comments on ads.
+	Comments *AdCommentsService
+	// Targeting covers targeting search, browse, reach estimates and bid
+	// suggestions.
+	Targeting *AdTargetingService
+	// Audiences covers custom audiences.
+	Audiences *AdAudiencesService
+	// LeadForms covers lead forms.
+	LeadForms *AdLeadFormsService
+	// Leads covers the leads copied from the lead forms.
+	Leads *AdLeadsService
+	// Conversions covers pixels, conversion goals, custom conversions and
+	// server-side events.
+	Conversions *AdConversionsService
+	// Insights covers live numbers, campaign and ad analytics, the
+	// timeline, rankings and alerts.
+	Insights *AdInsightsService
+	// Reports covers background reports.
+	Reports *AdReportsService
+	// Rules covers automated rules.
+	Rules *AdRulesService
+	// Results covers your own numbers per campaign and day.
+	Results *AdResultsService
+	// Media covers the network's own image and video library.
+	Media *AdMediaService
+	// Previews covers previews drawn by the network.
+	Previews *AdPreviewsService
+	// Partnership covers partnership ads (Meta).
+	Partnership *AdPartnershipService
+	// Accounts covers ad account admin (health, finance, settings, people,
+	// change log, businesses, DSA, hierarchy, identities).
+	Accounts *AdAccountsService
+	// ReachFrequency covers Meta reach and frequency.
+	ReachFrequency *AdReachFrequencyService
+	// Studies covers A/B tests and lift studies (Meta).
+	Studies *AdStudiesService
+	// BudgetSchedules covers planned budget increases (Meta).
+	BudgetSchedules *AdBudgetSchedulesService
+	// Google covers the Google reports.
+	Google *AdGoogleService
 }
 
 // AdDraftsService covers the /ads/drafts endpoints. Reach it through
@@ -158,19 +217,23 @@ type AdCampaign struct {
 	// CampaignType is "campaign" or "boost".
 	CampaignType string `json:"campaign_type"`
 	// Objective is "engagement", "traffic", "awareness", "video_views",
-	// "lead_generation" or "conversions".
+	// "lead_generation", "conversions", "messages" or "calls".
 	Objective string `json:"objective,omitempty"`
 	// Status is "draft", "pending_review" (in the network's ad review),
 	// "active", "rejected", "paused", "completed" or "error". A campaign is
-	// created as "draft" and spends only after activation.
+	// created as "draft" and spends only once a person starts it in the app.
 	Status string    `json:"status"`
 	Budget *AdBudget `json:"budget,omitempty"`
 	// AdAccountID is the ad account it runs on; nil on a draft without one.
 	AdAccountID *AdID `json:"ad_account_id,omitempty"`
-	// Targeting is the unified targeting (countries, ages, genders...);
+	// Targeting is the unified targeting (countries, ages, genders...) plus
+	// "network", the network's own targeting (AdNetworkTargeting);
 	// raw_targeting passes a native spec through.
 	Targeting map[string]any `json:"targeting,omitempty"`
-	Schedule  *AdSchedule    `json:"schedule,omitempty"`
+	// Settings are the network settings (bidding, conversion goal, lead
+	// form, messaging).
+	Settings *AdNetworkSettings `json:"settings,omitempty"`
+	Schedule *AdSchedule        `json:"schedule,omitempty"`
 	// Metrics are the latest synced numbers: spend (major units),
 	// impressions, clicks, ctr.
 	Metrics map[string]any `json:"metrics,omitempty"`
@@ -180,7 +243,7 @@ type AdCampaign struct {
 	// "rejected".
 	Errors *string `json:"errors,omitempty"`
 	// GroupID is set on a campaign of a "Create an ad" draft: start it with
-	// Ads.Drafts.Launch.
+	// Ads.Drafts.Launch (a key with ads:spend) or in the app.
 	GroupID      *string `json:"group_id,omitempty"`
 	LastSyncedAt *string `json:"last_synced_at,omitempty"`
 	// CreatedAt and UpdatedAt arrive in camelCase on a campaign
@@ -232,26 +295,23 @@ type AdBoostMultiParams struct {
 	Name         string         `json:"name,omitempty"`
 }
 
-// AdCampaignCreateParams is the request body for Ads.Create.
-type AdCampaignCreateParams struct {
-	AdAccountID AdID           `json:"ad_account_id"`
-	Name        string         `json:"name"`
-	Budget      AdBudget       `json:"budget"`
-	Objective   string         `json:"objective,omitempty"`
-	Targeting   map[string]any `json:"targeting,omitempty"`
-	Schedule    *AdSchedule    `json:"schedule,omitempty"`
-}
-
 // AdCampaignUpdateParams is the request body for Ads.Update. Only set
-// fields are sent.
+// fields are sent. A draft changes with ads:write. A campaign that reached
+// the network changes only with a key that has ads:spend (never on Google);
+// without it the call answers 403 start_in_app.
 type AdCampaignUpdateParams struct {
 	Name   string    `json:"name,omitempty"`
 	Budget *AdBudget `json:"budget,omitempty"`
 	// ConfirmBudgetAmount is required to RAISE the budget of a running
-	// campaign: the new amount again, after the person agreed to it.
+	// campaign (a key with ads:spend, outside APIDraftOnly): the new amount
+	// again, after the person agreed to it.
 	ConfirmBudgetAmount float64        `json:"confirm_budget_amount,omitempty"`
 	Targeting           map[string]any `json:"targeting,omitempty"`
 	Schedule            *AdSchedule    `json:"schedule,omitempty"`
+	// Objective and Settings change only while the campaign is a draft (400
+	// settings_locked after the start: duplicate it with Ads.Duplicate).
+	Objective string             `json:"objective,omitempty"`
+	Settings  *AdNetworkSettings `json:"settings,omitempty"`
 }
 
 // AdMultiResponse is the `{ results }` answer of Ads.BoostMulti and
@@ -271,7 +331,8 @@ type AdMultiBoostResult struct {
 	Code        string      `json:"code,omitempty"`
 }
 
-// AdMultiActivateResult is one campaign of Ads.ActivateMulti.
+// AdMultiActivateResult is one campaign of Ads.ActivateMulti. Code
+// "start_in_app" = the person starts it in the app (Error names the page).
 type AdMultiActivateResult struct {
 	CampaignID AdID        `json:"campaign_id"`
 	OK         bool        `json:"ok"`
@@ -289,6 +350,21 @@ type AdDeleted struct {
 
 // AdsTotals are the summed numbers of every campaign, spend in major units.
 type AdsTotals struct {
+	// Spend is nil when the campaigns use more than one currency: read
+	// AdsOverview.TotalsByCurrency then. Spend is never added across
+	// currencies.
+	Spend *float64 `json:"spend"`
+	// Currency is the one currency of Spend, nil when there are several
+	// (or none).
+	Currency    *string `json:"currency"`
+	Impressions float64 `json:"impressions"`
+	Clicks      float64 `json:"clicks"`
+}
+
+// AdsCurrencyTotals are the numbers of the campaigns in one currency.
+type AdsCurrencyTotals struct {
+	// Currency is the 3-letter ISO code, nil for campaigns without one.
+	Currency    *string `json:"currency"`
 	Spend       float64 `json:"spend"`
 	Impressions float64 `json:"impressions"`
 	Clicks      float64 `json:"clicks"`
@@ -300,6 +376,8 @@ type AdsOverview struct {
 	CampaignsTotal    int            `json:"campaigns_total"`
 	CampaignsByStatus map[string]int `json:"campaigns_by_status"`
 	Totals            AdsTotals      `json:"totals"`
+	// TotalsByCurrency holds spend, impressions and clicks per currency.
+	TotalsByCurrency []AdsCurrencyTotals `json:"totals_by_currency"`
 }
 
 // BoostSuggestion is an organic post that does better than the workspace
@@ -406,6 +484,12 @@ type AdGoalSupport struct {
 	Note       string `json:"note,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	NeedsVideo bool   `json:"needsVideo,omitempty"`
+	// APIOnly marks a goal through the API and MCP only (lead_generation,
+	// conversions, messages, calls).
+	APIOnly bool `json:"apiOnly,omitempty"`
+	// Needs says what the goal needs: "lead_form", "conversion",
+	// "messaging", "phone_number".
+	Needs []string `json:"needs,omitempty"`
 }
 
 // AdTextLimit is the limit of one text field on a network.
@@ -450,6 +534,12 @@ type AdNetworkCapabilities struct {
 	SpendNote         string `json:"spend_note,omitempty"`
 	MaxAdsPerCampaign *int   `json:"max_ads_per_campaign,omitempty"`
 	Review            string `json:"review"`
+	// BidStrategies are the strategies AdBiddingSetting takes here.
+	BidStrategies []string `json:"bid_strategies,omitempty"`
+	// Settings and AdFields list the keys of AdNetworkSettings and of
+	// AdDraftAd.Network[network] this network reads, with a short note.
+	Settings map[string]string `json:"settings,omitempty"`
+	AdFields map[string]string `json:"ad_fields,omitempty"`
 }
 
 // AdCTA is one button: its key and the label people see.
@@ -469,9 +559,22 @@ type AdCapabilities struct {
 	// NetworkStates per network: "live", "preview" (your organisation only)
 	// or "coming_soon".
 	NetworkStates map[string]string `json:"network_states,omitempty"`
-	// APIDraftOnly lists the networks where the API and MCP stop at the draft:
-	// a person starts and changes those ads in the app.
+	// APIDraftOnly lists the networks where every API caller stops at the
+	// draft, also a key with ads:spend (Google): a person starts and changes
+	// those ads in the app. The MCP stops at the draft on every network.
 	APIDraftOnly []string `json:"api_draft_only,omitempty"`
+	// APIStopInApp lists the networks where the API may not even pause or
+	// delete a campaign that reached the network (Google).
+	APIStopInApp []string `json:"api_stop_in_app,omitempty"`
+	// Features per network: the feature keys its API offers through
+	// OmniSocials (a missing one answers 400 not_supported_on_network).
+	Features      map[string][]string `json:"features,omitempty"`
+	FeatureLabels map[string]string   `json:"feature_labels,omitempty"`
+	// TargetingTypes per network: the types of Targeting.Search and the
+	// keys of AdNetworkTargeting.Include and Exclude.
+	TargetingTypes map[string][]string `json:"targeting_types,omitempty"`
+	// APIGoals are the goals through the API and MCP only.
+	APIGoals []string `json:"api_goals,omitempty"`
 }
 
 // ---- Drafts ------------------------------------------------------------------------
@@ -516,7 +619,9 @@ type AdDraftAd struct {
 	// {"x": {"primary_text": "..."}}.
 	Overrides map[string]any `json:"overrides,omitempty"`
 	// Network holds network-only fields, e.g. {"google": {"business_name":
-	// "...", "logo": {"url": "..."}}}.
+	// "...", "logo": {"url": "..."}}}, {"meta": AdMetaAdFields{...}},
+	// {"tiktok": AdTikTokAdFields{...}}, {"linkedin": {"lead_form_id":
+	// "..."}} or Google's "responsive_search_ad" (AdResponsiveSearchAd).
 	Network        map[string]any    `json:"network,omitempty"`
 	PlacementMedia *AdPlacementMedia `json:"placement_media,omitempty"`
 }
@@ -543,6 +648,10 @@ type AdDraftTargeting struct {
 	SpecialAdCategoryCountry []string `json:"special_ad_category_country,omitempty"`
 	// RegionalIdentities is Meta's verified payer per regional category.
 	RegionalIdentities map[string]any `json:"regional_identities,omitempty"`
+	// Networks is each network's own targeting (interests, places, job
+	// titles, custom audiences) with ids from Targeting.Search of that
+	// network. A save without it keeps each network's own.
+	Networks map[string]AdNetworkTargeting `json:"networks,omitempty"`
 }
 
 // AdDraftSchedule is how long a draft runs.
@@ -558,13 +667,18 @@ type AdDraftPlatform struct {
 	Platform     string  `json:"platform"`
 	BudgetAmount float64 `json:"budget_amount,omitempty"`
 	AdAccountID  AdID    `json:"ad_account_id,omitempty"`
+	// Settings are the network settings (bidding, conversion goal, lead
+	// form, messaging).
+	Settings *AdNetworkSettings `json:"settings,omitempty"`
 }
 
 // AdDraftParams is the request body for Ads.Drafts.Create and
 // Ads.Drafts.Update (the full draft).
 type AdDraftParams struct {
 	Name string `json:"name,omitempty"`
-	// Objective is "traffic", "engagement", "awareness" or "video_views".
+	// Objective is "traffic", "engagement", "awareness" or "video_views";
+	// through the API also "lead_generation", "conversions", "messages" or
+	// "calls" (AdGoalSupport.Needs says what each network needs).
 	Objective string `json:"objective"`
 	// Platforms: a []string of network keys, or a []AdDraftPlatform (or a
 	// mixed []any) for a daily amount or an ad account per network.
@@ -618,12 +732,14 @@ type AdDraftCampaign struct {
 	Status   string `json:"status"`
 	// Editable is true while the network never started: a save changes it,
 	// a launch starts it.
-	Editable           bool             `json:"editable"`
-	ExternalCampaignID *string          `json:"external_campaign_id"`
-	Budget             *AdBudget        `json:"budget"`
-	AdAccount          *AdDraftAccount  `json:"ad_account"`
-	Errors             *string          `json:"errors"`
-	Readiness          AdDraftReadiness `json:"readiness"`
+	Editable           bool            `json:"editable"`
+	ExternalCampaignID *string         `json:"external_campaign_id"`
+	Budget             *AdBudget       `json:"budget"`
+	AdAccount          *AdDraftAccount `json:"ad_account"`
+	Errors             *string         `json:"errors"`
+	// Settings are the network settings of this campaign.
+	Settings  *AdNetworkSettings `json:"settings,omitempty"`
+	Readiness AdDraftReadiness   `json:"readiness"`
 }
 
 // AdCurrencyChange is set when a network's ad account uses another currency
@@ -650,8 +766,8 @@ type AdDraft struct {
 	Targeting AdDraftTargeting  `json:"targeting"`
 	Ads       []AdDraftAd       `json:"ads"`
 	Campaigns []AdDraftCampaign `json:"campaigns"`
-	// ReviewURL is the builder in the dashboard, where a person can check
-	// and start the ad.
+	// ReviewURL is the builder in the dashboard, where the person checks and
+	// starts the ad: hand it over.
 	ReviewURL       string            `json:"review_url"`
 	CurrencyChanged *AdCurrencyChange `json:"currency_changed,omitempty"`
 	UpdatedAt       *string           `json:"updated_at,omitempty"`
@@ -690,13 +806,17 @@ type AdDraftAccountParams struct {
 // ConfirmBudgetAmount (one daily amount for every network) or
 // ConfirmBudgetAmounts (per campaign id). Each must equal that campaign's
 // daily amount, else 400 budget_confirmation_required and nothing is
-// written.
+// written. Needs a key with ads:spend: without it the call answers 403
+// start_in_app with the draft's page. A network in APIDraftOnly (Google) is
+// skipped with code "start_in_app".
 type AdDraftLaunchParams struct {
 	ConfirmBudgetAmount  float64          `json:"confirm_budget_amount,omitempty"`
 	ConfirmBudgetAmounts map[AdID]float64 `json:"confirm_budget_amounts,omitempty"`
 }
 
-// AdDraftLaunchItem is the outcome of one network of a launch.
+// AdDraftLaunchItem is the outcome of one network of a launch. The API
+// sends CampaignID as a string (64-bit ids); AdID reads it. Code
+// "start_in_app" = the person starts that network in the app.
 type AdDraftLaunchItem struct {
 	CampaignID AdID   `json:"campaign_id"`
 	Platform   string `json:"platform"`
@@ -719,7 +839,9 @@ type AdDraftLaunchResult struct {
 // status, for example "pending_review" to "active" (the network's review
 // passed and spend started) or to "rejected". Decode the raw delivery into
 // a struct with `Data AdStatusChangedEventData` after
-// VerifyWebhookSignature accepted it.
+// VerifyWebhookSignature accepted it. Subscribing to it needs the ads:read
+// scope on the key and access_ads for its person (else 403
+// insufficient_scope / insufficient_permission).
 type AdStatusChangedEventData struct {
 	CampaignID AdID `json:"campaign_id"`
 	// WorkspaceID arrives as a number or a string.
@@ -752,7 +874,12 @@ func (s *AdsService) ListAccounts(ctx context.Context) (*AdAccountsResponse, err
 
 // Capabilities calls `GET /ads/capabilities`: what each network accepts for
 // a new ad (goals, media, text limits, buttons, minimum daily budget),
-// CreateNetworks and NetworkStates. Requires the ads:read scope.
+// CreateNetworks and NetworkStates, and per network the Features its API
+// offers, TargetingTypes, BidStrategies, Settings and AdFields, plus
+// APIGoals, APIDraftOnly (networks where every API caller stops at the
+// draft, also a key with ads:spend: Google) and APIStopInApp (networks where
+// the API may not even pause or delete: Google). Requires the ads:read
+// scope.
 func (s *AdsService) Capabilities(ctx context.Context) (*ItemResponse[AdCapabilities], error) {
 	var out ItemResponse[AdCapabilities]
 	if err := s.client.get(ctx, "/ads/capabilities", nil, &out); err != nil {
@@ -800,9 +927,9 @@ func (s *AdsService) Get(ctx context.Context, id AdID) (*ItemResponse[AdCampaign
 }
 
 // Boost calls `POST /ads/boost`: boost a published post. It creates a DRAFT
-// boost: no spend until Activate. TikTok needs Creative.SparkAuthCode,
-// Google needs Headlines, Descriptions and LogoURL. Requires the ads:write
-// scope.
+// boost that spends nothing; the person starts it in the app. TikTok needs
+// Creative.SparkAuthCode, Google needs Headlines, Descriptions and LogoURL.
+// Requires the ads:write scope.
 func (s *AdsService) Boost(ctx context.Context, params *AdBoostParams) (*ItemResponse[AdCampaign], error) {
 	var out ItemResponse[AdCampaign]
 	if err := s.client.post(ctx, "/ads/boost", jsonBody(params), &out); err != nil {
@@ -823,23 +950,14 @@ func (s *AdsService) BoostMulti(ctx context.Context, params *AdBoostMultiParams)
 	return &out, nil
 }
 
-// Create calls `POST /ads/campaigns`: a DRAFT campaign without ads. It
-// cannot start (campaign_has_no_ads): use Ads.Drafts.Create for a new ad.
-// Requires the ads:write scope.
-func (s *AdsService) Create(ctx context.Context, params *AdCampaignCreateParams) (*ItemResponse[AdCampaign], error) {
-	var out ItemResponse[AdCampaign]
-	if err := s.client.post(ctx, "/ads/campaigns", jsonBody(params), &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // Update calls `PATCH /ads/campaigns/:id`: change the name, budget,
-// targeting or schedule. To RAISE the budget of a running campaign, which
-// raises real ad spend, show the person the new amount, get their yes, and
-// pass it again as ConfirmBudgetAmount. Not retried after a 5xx or a
-// connection error: read the campaign with Get to see what happened.
-// Requires the ads:write scope.
+// targeting or schedule of a draft. A campaign that reached the network
+// changes only with a key that has ads:spend; without it, and on Google
+// (APIDraftOnly) always, the call answers 403 start_in_app and a person
+// changes it in the app. ConfirmBudgetAmount (the new amount again, after
+// the person agreed to it) is for a budget raise of a running campaign. Not
+// retried after a 5xx or a connection error: read the campaign with Get to
+// see what happened. Requires the ads:write scope.
 func (s *AdsService) Update(ctx context.Context, id AdID, params *AdCampaignUpdateParams) (*ItemResponse[AdCampaign], error) {
 	var out ItemResponse[AdCampaign]
 	if err := s.client.doJSONWith(ctx, http.MethodPatch, adCampaignPath(id), jsonBody(params), &out, retryRateLimit); err != nil {
@@ -849,12 +967,14 @@ func (s *AdsService) Update(ctx context.Context, id AdID, params *AdCampaignUpda
 }
 
 // Activate calls `POST /ads/campaigns/:id/activate`: it STARTS REAL AD
-// SPEND. Show the person the budget (amount, currency, daily or lifetime)
-// and get their yes first; confirmBudgetAmount must equal the campaign's
-// budget amount. A campaign of a draft group answers 409 use_draft_launch:
-// use Ads.Drafts.Launch. Not retried after a 5xx or a connection error:
-// read the campaign with Get to see what happened. Requires the ads:write
-// scope.
+// SPEND. Needs a key with the opt-in ads:spend scope ("Start ads"); without
+// it, and on Google (APIDraftOnly) always, the call answers 403
+// start_in_app with the page where a person does it in the app. Show the
+// person the budget (amount, currency, daily or lifetime) and get their yes
+// first; confirmBudgetAmount must equal the campaign's budget amount. A
+// campaign of a draft group answers 409 use_draft_launch: use
+// Ads.Drafts.Launch. Not retried after a 5xx or a connection error: read
+// the campaign with Get to see what happened. Requires the ads:write scope.
 func (s *AdsService) Activate(ctx context.Context, id AdID, confirmBudgetAmount float64) (*ItemResponse[AdCampaign], error) {
 	body := map[string]any{"confirm_budget_amount": confirmBudgetAmount}
 	var out ItemResponse[AdCampaign]
@@ -865,11 +985,13 @@ func (s *AdsService) Activate(ctx context.Context, id AdID, confirmBudgetAmount 
 }
 
 // ActivateMulti calls `POST /ads/campaigns/activate-multi`: it STARTS REAL
-// AD SPEND on up to 10 campaigns. Every campaign's budget must equal
-// confirmBudgetAmount; show the person the total (amount x campaigns) and
-// get their yes first. Answers Results. Not retried after a 5xx or a
-// connection error: read the campaigns with Get to see what happened.
-// Requires the ads:write scope.
+// AD SPEND on up to 10 campaigns. Needs a key with ads:spend: without it,
+// and on Google (APIDraftOnly) always, a result has OK false and Code
+// "start_in_app" with the page where a person starts it. Every campaign's
+// budget must equal confirmBudgetAmount; show the person the total (amount
+// x campaigns) and get their yes first. Answers Results. Not retried after
+// a 5xx or a connection error: read the campaigns with Get to see what
+// happened. Requires the ads:write scope.
 func (s *AdsService) ActivateMulti(ctx context.Context, campaignIDs []AdID, confirmBudgetAmount float64) (*AdMultiResponse[AdMultiActivateResult], error) {
 	body := map[string]any{"campaign_ids": campaignIDs, "confirm_budget_amount": confirmBudgetAmount}
 	var out AdMultiResponse[AdMultiActivateResult]
@@ -880,7 +1002,9 @@ func (s *AdsService) ActivateMulti(ctx context.Context, campaignIDs []AdID, conf
 }
 
 // Pause calls `POST /ads/campaigns/:id/pause`: pause a campaign (also while
-// in review). Requires the ads:write scope.
+// in review). Open through the API, except on the networks in APIStopInApp
+// (Google): there a campaign that reached the network answers 403
+// start_in_app. Requires the ads:write scope.
 func (s *AdsService) Pause(ctx context.Context, id AdID) (*ItemResponse[AdCampaign], error) {
 	var out ItemResponse[AdCampaign]
 	if err := s.client.post(ctx, adCampaignPath(id)+"/pause", nil, &out); err != nil {
@@ -890,9 +1014,13 @@ func (s *AdsService) Pause(ctx context.Context, id AdID) (*ItemResponse[AdCampai
 }
 
 // Resume calls `POST /ads/campaigns/:id/resume`: resume a paused campaign,
-// which STARTS REAL AD SPEND again. Show the person the budget and get
-// their yes first. Not retried after a 5xx or a connection error: read the
-// campaign with Get to see what happened. Requires the ads:write scope.
+// which STARTS REAL AD SPEND again. Needs a key with the opt-in ads:spend
+// scope ("Start ads"); without it, and on Google (APIDraftOnly) always, the
+// call answers 403 start_in_app with the page where a person does it in the
+// app. Show the person the budget and get their yes first. Only a paused
+// campaign resumes (409 not_paused). Not retried after a 5xx or a
+// connection error: read the campaign with Get to see what happened.
+// Requires the ads:write scope.
 func (s *AdsService) Resume(ctx context.Context, id AdID) (*ItemResponse[AdCampaign], error) {
 	var out ItemResponse[AdCampaign]
 	if err := s.client.doJSONWith(ctx, http.MethodPost, adCampaignPath(id)+"/resume", nil, &out, retryRateLimit); err != nil {
@@ -903,7 +1031,9 @@ func (s *AdsService) Resume(ctx context.Context, id AdID) (*ItemResponse[AdCampa
 
 // Delete calls `DELETE /ads/campaigns/:id`: delete a campaign, on the
 // network too. A campaign that spent is archived: its spend stays in the
-// totals. Requires the ads:write scope.
+// totals. Open through the API, except a campaign that reached the network
+// on a network in APIStopInApp (Google): 403 start_in_app. Requires the
+// ads:write scope.
 func (s *AdsService) Delete(ctx context.Context, id AdID) (*ItemResponse[AdDeleted], error) {
 	var out ItemResponse[AdDeleted]
 	if err := s.client.do(ctx, http.MethodDelete, adCampaignPath(id), nil, nil, "", &out); err != nil {
@@ -913,7 +1043,8 @@ func (s *AdsService) Delete(ctx context.Context, id AdID) (*ItemResponse[AdDelet
 }
 
 // Overview calls `GET /ads/overview`: accounts, campaigns per status and
-// total spend. Requires the ads:read scope.
+// the totals. Totals.Spend is nil when the campaigns use more than one
+// currency: read TotalsByCurrency then. Requires the ads:read scope.
 func (s *AdsService) Overview(ctx context.Context) (*ItemResponse[AdsOverview], error) {
 	var out ItemResponse[AdsOverview]
 	if err := s.client.get(ctx, "/ads/overview", nil, &out); err != nil {
@@ -974,7 +1105,10 @@ func (s *AdDraftsService) Defaults(ctx context.Context) (*ItemResponse[AdDraftDe
 // Create calls `POST /ads/drafts`: save a new ad as a draft group. It needs
 // no ad account and spends nothing. Read Ads.Capabilities first for what
 // each network accepts. The answer carries ReviewURL (the builder in the
-// dashboard) and per network Readiness. Requires the ads:write scope.
+// dashboard, where the person checks and starts the ad: hand it over) and
+// per network Readiness. A Budget.Currency other than the attached ad
+// account's currency answers 400 currency_mismatch with param
+// "budget.currency". Requires the ads:write scope.
 func (s *AdDraftsService) Create(ctx context.Context, params *AdDraftParams) (*ItemResponse[AdDraft], error) {
 	var out ItemResponse[AdDraft]
 	if err := s.client.post(ctx, "/ads/drafts", jsonBody(params), &out); err != nil {
@@ -995,7 +1129,9 @@ func (s *AdDraftsService) Get(ctx context.Context, groupID string) (*ItemRespons
 
 // Update calls `PUT /ads/drafts/:group_id`: replace the draft with the full
 // body. Networks that already started are left alone
-// (AdDraftCampaign.Editable). Requires the ads:write scope.
+// (AdDraftCampaign.Editable). A Budget.Currency other than the attached ad
+// account's currency answers 400 currency_mismatch with param
+// "budget.currency". Requires the ads:write scope.
 func (s *AdDraftsService) Update(ctx context.Context, groupID string, params *AdDraftParams) (*ItemResponse[AdDraft], error) {
 	var out ItemResponse[AdDraft]
 	if err := s.client.put(ctx, adDraftPath(groupID), jsonBody(params), &out); err != nil {
@@ -1026,13 +1162,17 @@ func (s *AdDraftsService) AttachAccount(ctx context.Context, groupID string, par
 }
 
 // Launch calls `POST /ads/drafts/:group_id/launch`: it STARTS REAL AD SPEND
-// for every network of the draft that never started. Show the person the
-// daily amount per network and get their yes first, then pass it as
-// ConfirmBudgetAmount (or per campaign as ConfirmBudgetAmounts). A wrong or
-// missing amount answers 400 budget_confirmation_required and writes
-// nothing. Results per network; one failed network never stops the others.
-// Not retried after a 5xx or a connection error: read the draft with Get to
-// see what started. Requires the ads:write scope.
+// for every network of the draft that never started. Needs a key with the
+// opt-in ads:spend scope; without it the call answers 403 start_in_app with
+// the page where a person starts it (the draft's ReviewURL), and a network
+// in APIDraftOnly (Google) is always skipped with code "start_in_app". Show
+// the person the daily amount per network and get their yes first, then
+// pass it as ConfirmBudgetAmount (or per campaign as ConfirmBudgetAmounts).
+// A wrong or missing amount answers 400 budget_confirmation_required and
+// writes nothing. Results per network (CampaignID arrives as a string); one
+// failed network never stops the others. Not retried after a 5xx or a
+// connection error: read the draft with Get to see what started. Requires
+// the ads:write scope.
 func (s *AdDraftsService) Launch(ctx context.Context, groupID string, params *AdDraftLaunchParams) (*ItemResponse[AdDraftLaunchResult], error) {
 	var out ItemResponse[AdDraftLaunchResult]
 	if err := s.client.doJSONWith(ctx, http.MethodPost, adDraftPath(groupID)+"/launch", jsonBody(params), &out, retryRateLimit); err != nil {

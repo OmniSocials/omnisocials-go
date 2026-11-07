@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -373,5 +374,53 @@ func TestAdIDDecodesNumbersAndStrings(t *testing.T) {
 	}
 	if out, _ := json.Marshal(AdID(42)); string(out) != "42" {
 		t.Fatalf("an id encodes as a number, got %s", out)
+	}
+}
+
+// Several currencies: spend is null and totals_by_currency holds each one;
+// capabilities name the networks where every API caller stops at the draft
+// (also a key with ads:spend) and the ones where even a pause or a delete
+// happens in the app (both Google).
+func TestAdsOverviewPerCurrencyAndCapabilitiesStopLists(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ads/overview":
+			fmt.Fprint(w, `{"data":{"connected_accounts":2,"campaigns_total":3,"campaigns_by_status":{"active":2},
+				"totals":{"spend":null,"currency":null,"impressions":3000,"clicks":40},
+				"totals_by_currency":[{"currency":"EUR","spend":10.5,"impressions":1000,"clicks":15},
+				{"currency":"JPY","spend":1500,"impressions":2000,"clicks":25}]}}`)
+		default:
+			fmt.Fprint(w, `{"data":{"networks":[],"goals":[],"ctas":[],"create_networks":["meta"],
+				"api_draft_only":["google"],"api_stop_in_app":["google"]}}`)
+		}
+	}))
+	ctx := context.Background()
+
+	overview, err := client.Ads.Overview(ctx)
+	if err != nil {
+		t.Fatalf("Ads.Overview: %v", err)
+	}
+	o := overview.Data
+	if o.Totals.Spend != nil || o.Totals.Currency != nil || o.Totals.Impressions != 3000 ||
+		len(o.TotalsByCurrency) != 2 || o.TotalsByCurrency[1].Currency == nil ||
+		*o.TotalsByCurrency[1].Currency != "JPY" || o.TotalsByCurrency[1].Spend != 1500 {
+		t.Fatalf("unexpected overview: %+v", o)
+	}
+
+	caps, err := client.Ads.Capabilities(ctx)
+	if err != nil {
+		t.Fatalf("Ads.Capabilities: %v", err)
+	}
+	if len(caps.Data.APIDraftOnly) != 1 || caps.Data.APIDraftOnly[0] != "google" ||
+		len(caps.Data.APIStopInApp) != 1 || caps.Data.APIStopInApp[0] != "google" {
+		t.Fatalf("unexpected capabilities: %+v", caps.Data)
+	}
+}
+
+// POST /ads/campaigns is gone (a campaign without ads could never start):
+// AdsService has no Create method any more. New ads go through Drafts.Create.
+func TestAdsCampaignCreateIsGone(t *testing.T) {
+	if _, ok := reflect.TypeOf(&AdsService{}).MethodByName("Create"); ok {
+		t.Fatal("AdsService.Create was removed: POST /ads/campaigns no longer exists")
 	}
 }

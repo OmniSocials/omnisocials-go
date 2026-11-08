@@ -125,7 +125,12 @@ func (s *WebhooksService) Create(ctx context.Context, params *WebhookCreateParam
 // state. Works on organisation-wide webhooks too. IsActive true switches on
 // a webhook that was switched off (also an automatic switch-off); setting
 // URL, Events or switching it on makes the key's creator the person behind
-// the webhook.
+// the webhook. Setting URL on an organisation-wide webhook (even its current
+// one) moves it to the key's workspace: from then on it gets only that
+// workspace's events, and the answer shows the new WorkspaceID. When the
+// webhook has Ads events after the change, setting URL or Events or
+// switching it on needs the ads:read scope and access_ads for the key's
+// creator (403 otherwise, nothing changed).
 func (s *WebhooksService) Update(ctx context.Context, id string, params *WebhookUpdateParams) (*ItemResponse[Webhook], error) {
 	var out ItemResponse[Webhook]
 	if err := s.client.patch(ctx, "/webhooks/"+url.PathEscape(id), jsonBody(params), &out); err != nil {

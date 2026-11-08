@@ -638,6 +638,8 @@ type AutomationEvent struct {
 	// from the account), "no_credits" (X DMs had no credits for the
 	// answer), "opted_out" (the person replied STOP before),
 	// "automation_off" (paused or finished while the answer waited),
+	// "plan_inactive" (the organisation had no active plan or trial, so
+	// nothing was sent),
 	// "already_waiting" (Follow first: a second comment from a person who
 	// was already asked to follow); for "failed" the platform's error text.
 	Reason *string `json:"reason,omitempty"`

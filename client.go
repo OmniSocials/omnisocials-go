@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.16.0"
+const Version = "0.17.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -278,11 +278,31 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return c.doWith(ctx, method, path, query, body, contentType, out, retryAll)
 }
 
+// checkPath refuses a request path with an empty, "." or ".." segment.
+// Every id in the path was encoded with url.PathEscape, which leaves "." and
+// ".." as they are: URL normalisation drops such a segment or climbs one
+// level, so an id of ".." would reach another endpoint of the same API key,
+// and an empty id the list route. Nothing is sent.
+func checkPath(path string) error {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	for _, segment := range strings.Split(path, "/")[1:] {
+		if segment == "" || segment == "." || segment == ".." {
+			return fmt.Errorf("omnisocials: invalid request path %q: an id cannot be empty, \".\" or \"..\"", path)
+		}
+	}
+	return nil
+}
+
 // doWith is do with an explicit retry policy: retryRateLimit sends the
 // request again after a 429 only, never after a 5xx or a connection error.
 func (c *Client) doWith(ctx context.Context, method, path string, query url.Values, body []byte, contentType string, out any, retry retryPolicy) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := checkPath(path); err != nil {
+		return err
 	}
 	endpoint := c.baseURL + path
 	if len(query) > 0 {

@@ -2,6 +2,8 @@ package omnisocials
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -139,6 +141,45 @@ type BestTimesParams struct {
 func (s *AnalyticsService) Post(ctx context.Context, postID string) (*ItemResponse[PostAnalytics], error) {
 	var out ItemResponse[PostAnalytics]
 	if err := s.client.get(ctx, "/analytics/posts/"+url.PathEscape(postID), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// PostRefreshTweet is one tweet read by Analytics.RefreshPost (each part of
+// a thread is one).
+type PostRefreshTweet struct {
+	ID      string         `json:"id"`
+	Metrics map[string]any `json:"metrics"`
+	ReadAt  string         `json:"read_at"`
+}
+
+// PostRefreshResult is the data of Analytics.RefreshPost.
+type PostRefreshResult struct {
+	// PostID arrives as a number or a string.
+	PostID json.Number        `json:"post_id"`
+	Tweets []PostRefreshTweet `json:"tweets"`
+	// CreditsUsed is what the read cost: 0.5 per tweet (plus 0.5 per video
+	// or GIF tweet), 0 when the post was already read this UTC day or the
+	// partner's own X app pays.
+	CreditsUsed float64 `json:"credits_used"`
+	ReadAt      string  `json:"read_at"`
+}
+
+// RefreshPost calls `POST /analytics/posts/:id/refresh` ("Update now"):
+// read the X numbers of one published post now, outside its check schedule.
+// X bills every read, so it costs half a credit per tweet (each part of a
+// thread counts, plus half a credit for a video or GIF), and nothing when
+// the post was already read today (UTC). OmniSocials Connect accounts pay
+// on the partner's own X app. At most 5 reads of a post a UTC day. Needs
+// analytics:read. Because it can cost credits it is retried only after a
+// 429, never after a 5xx or a connection error. Errors: 402
+// insufficient_credits, 404 not_found, 409 refresh_not_available (no
+// published X tweet), 429 refresh_limit, 502 refresh_failed (nothing
+// charged).
+func (s *AnalyticsService) RefreshPost(ctx context.Context, postID string) (*ItemResponse[PostRefreshResult], error) {
+	var out ItemResponse[PostRefreshResult]
+	if err := s.client.doJSONWith(ctx, http.MethodPost, "/analytics/posts/"+url.PathEscape(postID)+"/refresh", nil, &out, retryRateLimit); err != nil {
 		return nil, err
 	}
 	return &out, nil

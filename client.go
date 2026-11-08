@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.17.0"
+const Version = "0.18.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
@@ -79,6 +79,9 @@ type Client struct {
 	// Analytics covers /analytics: post stats (single + batch), overview,
 	// account stats, and best times to post.
 	Analytics *AnalyticsService
+	// Credits covers /credits: the organisation's credit balance and what
+	// X statistics cost.
+	Credits *CreditsService
 	// Locations covers /locations: Instagram place tagging search + validate.
 	Locations *LocationsService
 	// Audio covers /audio: Instagram Reels licensed audio search.
@@ -188,6 +191,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.ApprovalWorkflows = &ApprovalWorkflowsService{client: c}
 	c.Accounts = &AccountsService{client: c}
 	c.Analytics = &AnalyticsService{client: c}
+	c.Credits = &CreditsService{client: c}
 	c.Locations = &LocationsService{client: c}
 	c.Audio = &AudioService{client: c}
 	c.Pinterest = &PinterestService{client: c}

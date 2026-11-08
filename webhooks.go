@@ -2,6 +2,7 @@ package omnisocials
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 )
 
@@ -19,13 +20,36 @@ type WebhookFailure struct {
 	Attempts int    `json:"attempts,omitempty"`
 }
 
+// XStatisticsWebhookEvents are the X statistics webhook events:
+// x_statistics.paused (the organisation's X statistics stopped at 0
+// credits) and x_statistics.resumed (they started again after a top-up).
+// One delivery per workspace with X; the data is XStatisticsEventData.
+var XStatisticsWebhookEvents = []string{
+	"x_statistics.paused",
+	"x_statistics.resumed",
+}
+
+// XStatisticsEventData is the `data` of an x_statistics.paused or
+// x_statistics.resumed delivery. Decode the raw delivery into a struct with
+// `Data XStatisticsEventData` after VerifyWebhookSignature accepted it.
+type XStatisticsEventData struct {
+	// WorkspaceID arrives as a number or a string.
+	WorkspaceID json.Number `json:"workspace_id"`
+	// AccountID is the X account as in Accounts.List ("<workspace_id>_x").
+	AccountID string `json:"account_id"`
+	// Reason is "insufficient_credits" (paused) or "credits_added"
+	// (resumed).
+	Reason string `json:"reason"`
+}
+
 // Webhook is a registered webhook endpoint.
 type Webhook struct {
 	ID  string `json:"id"`
 	URL string `json:"url"`
 	// Events the endpoint is subscribed to: post.scheduled, post.published,
-	// post.failed, post.approved, post.rejected, and the ads events
-	// (AdsWebhookEvents).
+	// post.failed, post.approved, post.rejected, the ads events
+	// (AdsWebhookEvents) and the X statistics events
+	// (XStatisticsWebhookEvents).
 	Events []string `json:"events"`
 	// WorkspaceID is the workspace whose events the webhook receives. nil
 	// for an organisation-wide webhook (made in the OmniSocials dashboard),
@@ -57,9 +81,11 @@ type WebhookCreateParams struct {
 	// AdStatusChangedEventData), ad.created, ad.updated, ad.review,
 	// ad.delivery_issue, campaign.created, campaign.updated,
 	// campaign.budget, lead.received, ads.sync_failed, ads.sync_recovered,
-	// ads.initial_sync_completed, ad_rule.triggered. Any ads event needs the
-	// ads:read scope on the key and access_ads for its person (else 403
-	// insufficient_scope / insufficient_permission).
+	// ads.initial_sync_completed, ad_rule.triggered, and the X statistics
+	// events (XStatisticsWebhookEvents): x_statistics.paused,
+	// x_statistics.resumed (their data is XStatisticsEventData). Any ads
+	// event needs the ads:read scope on the key and access_ads for its
+	// person (else 403 insufficient_scope / insufficient_permission).
 	Events []string `json:"events"`
 }
 
@@ -109,7 +135,8 @@ func (s *WebhooksService) Get(ctx context.Context, id string) (*ItemResponse[Web
 
 // Create calls `POST /webhooks`: register an endpoint for event deliveries
 // (post.scheduled, post.published, post.failed, post.approved,
-// post.rejected, and the ads events in AdsWebhookEvents). An ads event needs
+// post.rejected, the ads events in AdsWebhookEvents and the X statistics
+// events in XStatisticsWebhookEvents). An ads event needs
 // the ads:read scope on the key and access_ads for its person (else 403
 // insufficient_scope / insufficient_permission). The response includes the
 // signing Secret; save it, it is only shown once.

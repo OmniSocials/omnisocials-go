@@ -342,7 +342,7 @@ for _, w := range res.Warnings {
 }
 ```
 
-From `EnforceFrom` (2026-08-14) the balance is checked at publish time, but credits are only deducted after the post successfully publishes (a failed publish is never charged). If the balance can't cover it, only the X target fails (other platforms publish normally); top up in the dashboard under Settings -> Organisation -> Billing -> Credits, then `Posts.Retry`. Posts without links, analytics, and media on X stay free. There is no API endpoint for credits — they are managed in the dashboard.
+From `EnforceFrom` (2026-08-14) the balance is checked at publish time, but credits are only deducted after the post successfully publishes (a failed publish is never charged). If the balance can't cover it, only the X target fails (other platforms publish normally); top up in the dashboard under Settings -> Organisation -> Billing -> Credits, then `Posts.Retry`. Posts without links and media on X stay free. X statistics use credits too, at X's price (see [X statistics use credits](#x-statistics-use-credits)). `client.Credits.Get(ctx)` reads the balance; top-ups are made in the dashboard.
 
 **Schedule-time gate.** Separately, every scheduled X link post *reserves* its cost until it publishes (shown as an orange "reserved" slice on the dashboard's credits page). `Posts.Create` (non-draft), `Posts.CreateAndPublish`, `Posts.Update` (when it schedules or edits a scheduled X link post), and `Posts.Publish` all refuse up front with a 402 error whose `Code` is `x_credits_insufficient` when this post's cost plus what's already reserved by other scheduled X link posts would exceed the balance. 402 isn't one of the SDK's typed error subclasses, so match it against the base `*APIError` and check `Code`:
 
@@ -643,6 +643,8 @@ ig, err := client.Accounts.Get(ctx, accounts.Data[0].ID)
 
 `Status` is `active` or `needs_reconnect` (the token was revoked or expired; Bluesky also when its sign-in could not be renewed). Posts to a `needs_reconnect` account fail until it is reconnected in the OmniSocials app. OmniSocials Connect customer workspaces can also show `pick_pending` (Facebook, Connect customers only: no Page chosen yet; `PickPending` is true then).
 
+An X account also carries `XStatistics` (`x_statistics` on the wire: `posts`, `followers`, `post_schedule`, `source`, `billing`, `state`, `paused_reason`): how often OmniSocials reads its X statistics and who pays. `client.Accounts.Update(ctx, id, &omnisocials.AccountUpdateParams{...})` changes it; see [X statistics use credits](#x-statistics-use-credits).
+
 ## Analytics
 
 ```go
@@ -675,6 +677,43 @@ for _, slot := range slots {
 	fmt.Println(slot)
 }
 ```
+
+### X statistics use credits
+
+X bills every statistics read, and OmniSocials passes X's price on as credits: half a credit per post check (plus half a credit when the tweet has a video or GIF; each part of a thread counts) and 1 credit per follower count. Every X account carries `x_statistics`:
+
+- `posts`: how often each post is checked. `full` (5 checks: about 5 hours, day 1, 3 and 7, and day 30 for posts with 100+ views), `light` (2 checks: about 5 hours and day 7) or `off`.
+- `followers`: how often the follower count is read. `daily`, `weekly` or `off`.
+- `source` (`account` or `default`), `billing` (`credits`), `state` (`active`, `paused`, `off`) and `paused_reason` (`insufficient_credits` or null).
+
+When the balance reaches 0 the reads pause (`state` `paused`) and start again by themselves after a top-up; the webhook events `x_statistics.paused` and `x_statistics.resumed` say so. `x_statistics.charging` in the answer of `client.Credits.Get(ctx)` says whether reads are charged yet and from when.
+
+```go
+// How often an X account is checked (opt-in scope accounts:write, billing rights)
+account, err := client.Accounts.Update(ctx, "1234_x", &omnisocials.AccountUpdateParams{
+	XStatistics: &omnisocials.XStatisticsInput{
+		Posts:     omnisocials.XStatisticsPostsLight, // one field or both
+		Followers: omnisocials.XStatisticsFollowersDaily,
+	},
+})
+if err == nil && account.Data.XStatistics != nil {
+	fmt.Println(account.Data.XStatistics.State)
+}
+
+// "Update now": read one post's X numbers now (scope analytics:read)
+fresh, err := client.Analytics.RefreshPost(ctx, "9123")
+if err == nil {
+	fmt.Println(fresh.Data.CreditsUsed, len(fresh.Data.Tweets))
+}
+
+// The balance and what X statistics cost (opt-in scope credits:read, billing rights)
+credits, err := client.Credits.Get(ctx)
+if err == nil {
+	fmt.Println(credits.Data.Balance, credits.Data.XStatistics.TotalCreditsMonth)
+}
+```
+
+`Analytics.RefreshPost` costs nothing when the post was already read that day (UTC) and works at most 5 times a post and 100 times an organisation a day. Errors: `402 insufficient_credits`, `409 refresh_not_available` (no published X tweet), `429 refresh_limit`, `502 refresh_failed` (nothing charged). Because it can cost credits, the SDK retries it only after a 429, never after a 5xx or a timeout. `Accounts.Update` needs the opt-in scope `accounts:write` and billing rights (manage_billing) for the key's creator, sends only the keys you give, and answers `400 validation_error`, `invalid_value` or `not_supported` (not an X account) and `403 insufficient_permission` (no billing rights for the key's creator). `Credits.Get` needs the opt-in scope `credits:read` and billing rights. The value constants are `XStatisticsPostsFull`, `XStatisticsPostsLight`, `XStatisticsPostsCustom`, `XStatisticsOff`, `XStatisticsFollowersDaily`, `XStatisticsFollowersWeekly`, `XStatisticsFollowersHourly` and `XStatisticsFollowers6h`.
 
 ## Locations (Instagram and Threads location tagging)
 
@@ -834,7 +873,7 @@ interests, err := client.Ads.Targeting.Search(ctx, &omnisocials.AdTargetingSearc
 
 ## Webhooks
 
-Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`. `ad.status_changed` fires when an ad campaign changes status (for example `pending_review` to `active` or `rejected`); its `data` is the campaign, not a post: decode it into `omnisocials.AdStatusChangedEventData` (`CampaignID`, `Name`, `Platform`, `CampaignType`, `Status`, `PreviousStatus`, `ExternalCampaignID`, `Budget`). The other ads events are listed in `omnisocials.AdsWebhookEvents` (`ad.created`, `ad.updated`, `ad.review`, `ad.delivery_issue`, `campaign.created`, `campaign.updated`, `campaign.budget`, `lead.received`, `ads.sync_failed`, `ads.sync_recovered`, `ads.initial_sync_completed`, `ad_rule.triggered`). Subscribing to `ad.status_changed` or any other ads event needs the `ads:read` scope on the key and `access_ads` for its person (`403 insufficient_scope` / `insufficient_permission`).
+Events: `post.scheduled`, `post.published`, `post.failed`, `post.approved` (the last step of a post's approval workflow is approved) and `post.rejected` (an approver rejects the post; it will not publish). The two approval events carry `data.approval` with `status`, `decided_by` (the approver's user id) and `reason` (null on `post.approved`), and an empty `data.targets`. `ad.status_changed` fires when an ad campaign changes status (for example `pending_review` to `active` or `rejected`); its `data` is the campaign, not a post: decode it into `omnisocials.AdStatusChangedEventData` (`CampaignID`, `Name`, `Platform`, `CampaignType`, `Status`, `PreviousStatus`, `ExternalCampaignID`, `Budget`). The other ads events are listed in `omnisocials.AdsWebhookEvents` (`ad.created`, `ad.updated`, `ad.review`, `ad.delivery_issue`, `campaign.created`, `campaign.updated`, `campaign.budget`, `lead.received`, `ads.sync_failed`, `ads.sync_recovered`, `ads.initial_sync_completed`, `ad_rule.triggered`). Subscribing to `ad.status_changed` or any other ads event needs the `ads:read` scope on the key and `access_ads` for its person (`403 insufficient_scope` / `insufficient_permission`). `x_statistics.paused` and `x_statistics.resumed` fire when the organisation's X statistics stop at 0 credits or start again after a top-up, one delivery per workspace with X; `data` is `{ workspace_id, account_id, reason }` (`reason` is `insufficient_credits` or `credits_added`). `XStatisticsWebhookEvents` lists them and `XStatisticsEventData` types the `data`.
 
 ### Manage endpoints
 
@@ -1130,7 +1169,7 @@ if err != nil {
 
 ## API scopes
 
-Each API key carries scopes: `posts:read`, `posts:write`, `media:write`, `accounts:read`, `analytics:read`, `webhooks:manage`, plus the opt-in `automations:read` / `automations:write` for comment-to-DM automations. A call with a missing scope returns a `*PermissionDeniedError` with code `insufficient_scope`.
+Each API key carries scopes: `posts:read`, `posts:write`, `media:write`, `accounts:read`, `analytics:read`, `webhooks:manage`, plus the opt-in `automations:read` / `automations:write` for comment-to-DM automations, `accounts:write` for `Accounts.Update` and `credits:read` for `Credits.Get`. A call with a missing scope returns a `*PermissionDeniedError` with code `insufficient_scope`.
 
 ## Documentation
 

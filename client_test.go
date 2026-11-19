@@ -2,6 +2,7 @@ package omnisocials
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -891,6 +892,28 @@ func TestAllServiceMethodsExist(t *testing.T) {
 		if m == nil {
 			t.Fatalf("method %d in the inventory is nil", i)
 		}
+	}
+}
+
+func TestInboxMessageDecodesEveryAttachment(t *testing.T) {
+	var m InboxMessage
+	err := json.Unmarshal([]byte(`{"id":"501","attachment":{"url":"https://cdn.test/a.jpg","type":"image"},
+		"attachments":[{"url":"https://cdn.test/a.jpg","type":"image","thumbnail_url":null},
+		{"url":"https://cdn.test/b.mp4","type":"video","thumbnail_url":"https://cdn.test/b.jpg"}]}`), &m)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(m.Attachments) != 2 || m.Attachments[1].Type != "video" {
+		t.Fatalf("expected two attachments, the second a video, got %+v", m.Attachments)
+	}
+	if m.Attachments[1].ThumbnailURL == nil || *m.Attachments[1].ThumbnailURL != "https://cdn.test/b.jpg" {
+		t.Fatalf("expected the video's still, got %+v", m.Attachments[1].ThumbnailURL)
+	}
+	if m.Attachments[0].ThumbnailURL != nil {
+		t.Fatalf("a photo has no still, got %v", *m.Attachments[0].ThumbnailURL)
+	}
+	if m.Attachment == nil || m.Attachment.URL != "https://cdn.test/a.jpg" {
+		t.Fatalf("attachment must stay the first file, got %+v", m.Attachment)
 	}
 }
 

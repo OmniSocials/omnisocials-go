@@ -125,7 +125,7 @@ _, err = client.Posts.Update(ctx, proposal.Data.ID, &omnisocials.PostUpdateParam
 
 ### Comment-to-DM automations
 
-Answer a keyword in an Instagram comment with a DM, once per person, with an optional public reply under the comment. Set `CommentDMAutomation` on `Create` (Instagram must be in `Channels`) and the automation is bound to that post; it starts listening once the post is live. Needs the opt-in `automations:write` scope on the key. `client.Automations` manages the automations themselves (`List`, `Get`, `Create`, `Update`, `Delete`) and reads their activity (`ListEvents`, `automations:read`). On `Update`, a `*CommentDMAutomationInput` replaces the post's automation and `omnisocials.Null` removes it. Instagram rules: one private reply per comment, within 7 days; OmniSocials caps sends at 180 DMs an hour per account.
+Answer a keyword in an Instagram comment with a DM, once per person, with an optional public reply under the comment. Set `CommentDMAutomation` on `Create` (Instagram must be in `Channels`) and the automation is bound to that post; it starts listening once the post is live. Needs the opt-in `automations:write` scope on the key. `client.Automations` manages the automations themselves (`List`, `Get`, `Create`, `Update`, `Delete`) and reads their activity (`ListEvents`, `automations:read`). On `Update`, a `*CommentDMAutomationInput` replaces the post's automation and `omnisocials.Null` removes it. Instagram rules: one private reply per comment, within 7 days; OmniSocials caps sends at 700 DMs an hour per account, and an answer over the cap waits in a queue for up to a day.
 
 ```go
 post, err := client.Posts.Create(ctx, &omnisocials.PostCreateParams{
@@ -167,6 +167,22 @@ _, err = client.Automations.Update(ctx, automationID, &omnisocials.AutomationUpd
 			Enabled:      omnisocials.Bool(true),
 			FirstMessage: &omnisocials.FollowGateMessage{Text: "Tap the button and I'll send you the link 👇", Button: "Send me the link"},
 			NotFollowing: &omnisocials.FollowGateMessage{Text: "Almost there! Follow @yourbrand first, then tap the button again.", Button: "I follow now"},
+		},
+	},
+})
+```
+
+A follow-up (`Actions.FollowUp`, Instagram and Facebook) sends one more DM `DelayHours` (1 to 23, default 23) after the answer went out, with an optional link `Button`. Meta allows an automatic message only within 24 hours after the person's last DM, button tap or quick reply; the comment and the private reply do not open that window. So on an Instagram comment with Follow first off the first DM becomes a tap step, a short text with one button (`FollowUp.Tap`, default "Tap the button and I'll send you the link 👇" / "Send me the link"), and the tap sends `Actions.DM.Text`. Until the tap the event is `waiting` with `event.FollowGate.Mode` `"tap"`; people who never tap get no link and no follow-up. With Follow first on, its own tap is the tap; DM and story reply triggers need none. A Facebook comment answer has no button, so only people who answer the DM in Messenger get the follow-up. At send time it is skipped when the automation is off, the person said stop, your team answered by hand or the window closed: `event.FollowUp` carries `State`, `DueAt`, `SentAt` and `Reason` / `ReasonLabel`, and `Stats.FollowUpsSent` / `FollowUpsSkipped` count them. `Enabled: omnisocials.Bool(false)` turns it off and keeps the texts; on `Update` it merges, and `RemoveButton: true` removes the button. `Enabled: omnisocials.Bool(true)` on an X automation is a `400 follow_up_not_supported`.
+
+```go
+_, err = client.Automations.Update(ctx, automationID, &omnisocials.AutomationUpdateParams{
+	Actions: &omnisocials.AutomationActions{
+		DM: omnisocials.AutomationDM{Text: "Here is the guide: https://example.com/guide"},
+		FollowUp: &omnisocials.AutomationFollowUp{
+			Enabled:    omnisocials.Bool(true),
+			Text:       "Did the guide help? Book a free call if you want a hand.",
+			DelayHours: 23,
+			Button:     &omnisocials.FollowUpButton{Title: "Book a call", URL: "https://example.com/call"},
 		},
 	},
 })

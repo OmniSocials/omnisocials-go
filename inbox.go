@@ -115,24 +115,33 @@ type InboxMessage struct {
 	// null) where the platform has no like through OmniSocials (DMs,
 	// Instagram, YouTube, X, Threads).
 	Liked *bool `json:"liked,omitempty"`
-	// Permalink is a link to the reply or mentioning post on the platform,
-	// when known.
+	// Permalink is a link to the reply or mentioning post on the platform:
+	// set on Threads replies and mentions, nil on the other platforms.
 	Permalink *string `json:"permalink,omitempty"`
-	// Attachment is media on this message, when present. Incoming
-	// Instagram/Facebook DM images, videos, voice messages, and story
-	// mentions are re-hosted on our CDN so the URL stays valid indefinitely.
-	// nil when the message has no media.
+	// Attachment is media on this message, when present: the first item of
+	// Attachments. Incoming Instagram/Facebook DM images, videos, voice
+	// messages and story mentions, and the photos, videos and GIFs of
+	// Threads replies and mentions, are re-hosted on our CDN so the URL
+	// stays valid indefinitely. nil when the message has no media.
 	Attachment *InboxAttachment `json:"attachment,omitempty"`
-	Sender     InboxParticipant `json:"sender"`
+	// Attachments is every file of this message, in order; empty when it
+	// has none. A Threads carousel reply or mention lists each item (up to
+	// 20).
+	Attachments []InboxAttachment `json:"attachments"`
+	Sender      InboxParticipant  `json:"sender"`
 	// Post is the related post for comment/mention messages; nil for DMs.
 	Post *InboxPostRef `json:"post,omitempty"`
 }
 
-// InboxAttachment is media sent with an inbox message.
+// InboxAttachment is one file of an inbox message.
 type InboxAttachment struct {
 	URL string `json:"url"`
-	// Type is "image", "video", "audio", or "file".
+	// Type is "image", "video", "audio", "file" or "link", from the fetched
+	// bytes (a GIF is "image").
 	Type string `json:"type"`
+	// ThumbnailURL is a still of a Threads video, on our CDN; nil otherwise
+	// (and on Attachment, which carries no still).
+	ThumbnailURL *string `json:"thumbnail_url,omitempty"`
 }
 
 // InboxMarkReadResponse is the Inbox.MarkRead response. Note: unlike the item

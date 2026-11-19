@@ -504,6 +504,77 @@ type AutomationFollowGate struct {
 	NotFollowing *FollowGateMessage `json:"not_following,omitempty"`
 }
 
+// FollowUpButton is the optional link button under a follow-up: Title (1 to
+// 20 characters) and URL (a web address that starts with https:// or
+// http://, max 2000 characters).
+type FollowUpButton struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+// FollowUpTap is the tap step of a follow-up (Instagram only): the first DM
+// of a comment answer when Follow first is off, a short Text (max 640
+// characters) with one Button (max 20 characters). The tap sends
+// Actions.DM.Text and opens Meta's 24-hour window. In a response the
+// defaults are filled in ("Tap the button and I'll send you the link 👇" /
+// "Send me the link"); on input an empty Text or Button is the default.
+type FollowUpTap struct {
+	Text   string `json:"text,omitempty"`
+	Button string `json:"button,omitempty"`
+}
+
+// AutomationFollowUp is the follow-up (Instagram and Facebook): one more
+// automatic DM DelayHours (1 to 23, default 23) after the answer
+// (Actions.DM.Text) went out. Meta allows an automatic message only within
+// 24 hours after the person's last DM, button tap or quick reply; the
+// comment and the private reply do not open that window. So on an Instagram
+// comment with Follow first off the first DM becomes the tap step (Tap): the
+// tap sends the link, and until then the event has Outcome "waiting" with
+// FollowGate.Mode "tap"; people who never tap get no link and no follow-up.
+// With Follow first on, its own tap is the tap. A DM or a story reply opened
+// the window itself (no tap step). A Facebook comment answer has no button:
+// only people who answer the DM in Messenger can get the follow-up. An
+// automation finished by its DM limit or stop date still sends its
+// follow-ups.
+//
+// In a response Text is "" when none was written, Button is nil without a
+// button, Tap is filled in with the defaults on Instagram and nil on
+// Facebook, and Automation.Actions.FollowUp is nil on X automations. On
+// input every field is optional; Text (max 1000 characters, 640 with a
+// Button) is required when Enabled is true, here or stored. On
+// Automations.Update the follow-up merges into the stored one: fields left
+// out keep their value, Tap merges field by field, Enabled
+// omnisocials.Bool(false) turns it off and keeps the texts. Enabled
+// omnisocials.Bool(true) on an X automation is a 400
+// follow_up_not_supported; other bad input is a 400 validation_error.
+type AutomationFollowUp struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	Text    string `json:"text,omitempty"`
+	// DelayHours is the number of whole hours after the answer, 1 to 23
+	// (default 23); 0 leaves it out.
+	DelayHours int             `json:"delay_hours,omitempty"`
+	Button     *FollowUpButton `json:"button,omitempty"`
+	// Tap holds the tap step's texts (Instagram only, ignored on Facebook).
+	Tap *FollowUpTap `json:"tap,omitempty"`
+	// RemoveButton sends "button": null, which removes the stored button on
+	// Automations.Update (a nil Button is left out and keeps it). It is
+	// ignored when Button is set and never filled from a response.
+	RemoveButton bool `json:"-"`
+}
+
+// MarshalJSON sends "button": null when RemoveButton is set and Button is
+// nil; otherwise the plain fields.
+func (f AutomationFollowUp) MarshalJSON() ([]byte, error) {
+	type plain AutomationFollowUp
+	if !f.RemoveButton || f.Button != nil {
+		return json.Marshal(plain(f))
+	}
+	return json.Marshal(struct {
+		plain
+		Button json.RawMessage `json:"button"`
+	}{plain(f), Null})
+}
+
 // AutomationActions is the actions block of an Automation, also sent on
 // create / update and inside CommentDMAutomationInput.
 type AutomationActions struct {
@@ -513,6 +584,11 @@ type AutomationActions struct {
 	// with Platforms ["instagram", "facebook"] it applies to the Instagram
 	// automation; the Facebook one sends at once.
 	FollowGate *AutomationFollowGate `json:"follow_gate,omitempty"`
+	// FollowUp is the follow-up (Instagram and Facebook; nil on X). In
+	// CommentDMAutomationInput with Platforms ["instagram", "facebook"] it
+	// applies to both automations (Tap to the Instagram one only); on a post
+	// update a nil FollowUp keeps the stored one.
+	FollowUp *AutomationFollowUp `json:"follow_up,omitempty"`
 }
 
 // AutomationLimits is the limits block of an Automation, also sent on create
@@ -525,14 +601,18 @@ type AutomationLimits struct {
 }
 
 // AutomationStats are the counters of an Automation. Followed counts the
-// people who followed after the Follow first ask, then got the link.
+// people who followed after the Follow first ask, then got the link;
+// FollowUpsSent the follow-ups that went out and FollowUpsSkipped the ones
+// kept back (see AutomationEventFollowUp.Reason).
 type AutomationStats struct {
-	Matched     int     `json:"matched"`
-	Sent        int     `json:"sent"`
-	Skipped     int     `json:"skipped"`
-	Failed      int     `json:"failed"`
-	Followed    int     `json:"followed"`
-	LastEventAt *string `json:"last_event_at,omitempty"`
+	Matched          int     `json:"matched"`
+	Sent             int     `json:"sent"`
+	Skipped          int     `json:"skipped"`
+	Failed           int     `json:"failed"`
+	Followed         int     `json:"followed"`
+	FollowUpsSent    int     `json:"follow_ups_sent"`
+	FollowUpsSkipped int     `json:"follow_ups_skipped"`
+	LastEventAt      *string `json:"last_event_at,omitempty"`
 }
 
 // AutomationPost is the post an automation listens on, as a snapshot.
@@ -559,12 +639,13 @@ type AutomationPost struct {
 // Page a keyword in a comment (or a Messenger message to the Page) is
 // answered with a DM in Messenger; a Page has no story replies. Meta rules,
 // the same on both: one private reply per comment, within 7 days;
-// OmniSocials caps sends at 180 DMs an hour per account and platform. On X
+// OmniSocials caps sends at 700 DMs an hour per account and platform. On X
 // a keyword in a DM to the X account is answered with a DM (no post, no
 // public reply); every X answer ends with "Reply STOP to stop automatic
 // messages." and a person who replies STOP gets no automatic DM from the
 // account again; X caps sends at 15 per 15 minutes and 450 a day. An answer
-// over a cap waits in a queue (outcome "queued") for up to an hour.
+// over a cap waits in a queue (outcome "queued") for up to about a day on
+// Instagram and Facebook (an hour on X).
 type Automation struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
@@ -626,13 +707,16 @@ type AutomationEvent struct {
 	// Kind is what the person did: "comment", "dm" or "story_reply".
 	Kind string `json:"kind"`
 	// Outcome is "sent", "skipped", "failed", "pending", "queued" (the
-	// answer waits for a free slot under the send cap and goes out within
-	// the hour), "opted_out" (the person replied STOP on X) or "waiting"
-	// (Follow first: asked to follow, the link goes out after the follow).
+	// answer waits for a free slot under the send cap and goes out as soon
+	// as there is room), "opted_out" (the person replied STOP on X) or "waiting"
+	// (Follow first: asked to follow, the link goes out after the follow; or
+	// the tap step of a follow-up, FollowGate.Mode "tap": the link goes out
+	// after the tap). A "waiting" event counts against the DM limit.
 	Outcome string `json:"outcome"`
 	// Reason: for "skipped" one of "already_sent", "limit_reached",
-	// "stopped", "window_passed", "rate_limited" (the send cap stayed full
-	// for an hour), "cannot_message" (a Page made the comment, or the
+	// "stopped", "window_passed", "rate_limited" (the send cap stayed full:
+	// for a day on Instagram and Facebook, for an hour on X),
+	// "cannot_message" (a Page made the comment, or the
 	// person's settings block messages), "already_replied",
 	// "dm_window_passed", "dms_closed" (X: the person does not accept DMs
 	// from the account), "no_credits" (X DMs had no credits for the
@@ -655,17 +739,49 @@ type AutomationEvent struct {
 	Message           *string `json:"message,omitempty"`
 	PublicReply       *string `json:"public_reply,omitempty"`
 	PlatformMessageID *string `json:"platform_message_id,omitempty"`
-	// FollowGate is where this person is in Follow first; nil when the
-	// automation had no follow ask for them.
+	// FollowGate is where this person is in Follow first, or in the tap step
+	// of a follow-up (Mode "tap"); nil when the automation had no follow ask
+	// or tap step for them.
 	FollowGate *AutomationEventFollowGate `json:"follow_gate,omitempty"`
-	CreatedAt  string                     `json:"created_at,omitempty"`
-	SentAt     *string                    `json:"sent_at,omitempty"`
+	// FollowUp is where the follow-up of this answer is; nil when it has
+	// none.
+	FollowUp  *AutomationEventFollowUp `json:"follow_up,omitempty"`
+	CreatedAt string                   `json:"created_at,omitempty"`
+	SentAt    *string                  `json:"sent_at,omitempty"`
+}
+
+// AutomationEventFollowUp is AutomationEvent.FollowUp.
+type AutomationEventFollowUp struct {
+	// State is "scheduled" (waits for DueAt), "sending", "sent", "skipped"
+	// (kept back, see Reason) or "failed".
+	State string `json:"state"`
+	// DueAt is when the follow-up is due (ISO 8601).
+	DueAt *string `json:"due_at,omitempty"`
+	// SentAt is when it went out (ISO 8601).
+	SentAt *string `json:"sent_at,omitempty"`
+	// Reason is set on "skipped" and "failed" only. For "skipped" one of
+	// "automation_off" (paused or deleted), "follow_up_off" (switched off
+	// since), "plan_inactive", "opted_out" (the person's latest message is
+	// "stop"), "team_answered" (a team member wrote to the person by hand
+	// after the answer), "window_closed" (the person's last tap or message
+	// is older than 24 hours minus 15 minutes) or "cannot_message" (Meta
+	// refused on the person's side); for "failed" the platform's error
+	// text, or "interrupted" (a send that died midway; it is never sent
+	// again).
+	Reason *string `json:"reason,omitempty"`
+	// ReasonLabel is Reason in plain words for "skipped", the error text for
+	// "failed".
+	ReasonLabel       *string `json:"reason_label,omitempty"`
+	PlatformMessageID *string `json:"platform_message_id,omitempty"`
 }
 
 // AutomationEventFollowGate is AutomationEvent.FollowGate.
 type AutomationEventFollowGate struct {
-	// State is "waiting" (asked to follow, no link yet) or "done" (the link
-	// went out).
+	// Mode is "follow" (Follow first) or "tap" (the tap step of a follow-up:
+	// no follow check, so Checked is false and Followed nil after the tap).
+	Mode string `json:"mode,omitempty"`
+	// State is "waiting" (asked to follow or to tap, no link yet) or "done"
+	// (the link went out).
 	State *string `json:"state,omitempty"`
 	// AskedAt is when the follow ask went out (ISO 8601).
 	AskedAt *string `json:"asked_at,omitempty"`
@@ -745,6 +861,10 @@ type AutomationUpdateParams struct {
 	// the public reply off. FollowGate merges too: Enabled
 	// omnisocials.Bool(false) turns Follow first off and keeps its texts,
 	// new texts keep the switch, and a nil FollowGate keeps the stored one.
+	// FollowUp merges the same way: fields left out keep their value, Tap
+	// merges field by field, RemoveButton removes the button, Enabled
+	// omnisocials.Bool(false) turns it off and keeps the texts, and a nil
+	// FollowUp keeps the stored one.
 	Actions *AutomationActions `json:"actions,omitempty"`
 	// Limits is merged into the stored limits: a *AutomationLimits with only
 	// StopAt keeps MaxSends. To remove a limit send a map[string]any with

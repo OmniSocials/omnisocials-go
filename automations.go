@@ -15,10 +15,11 @@ import (
 // post, no public reply), while X DMs are on for the workspace; every X
 // answer ends with "Reply STOP to stop automatic messages." and a person who
 // replies STOP gets no automatic DM from the account again. Meta rules: one
-// private reply per comment, within 7 days. OmniSocials caps sends at 180
+// private reply per comment, within 7 days. OmniSocials caps sends at 700
 // DMs an hour per account on Instagram and Facebook, and at 15 per 15
 // minutes and 450 a day on X; an answer over a cap waits in a queue
-// ("queued") for up to an hour. The scopes are opt-in on the API key: automations:read for List, Get and
+// ("queued") for up to about a day on Instagram and Facebook (an hour on
+// X). The scopes are opt-in on the API key: automations:read for List, Get and
 // ListEvents, automations:write for Create, Update and Delete (and for
 // PostCreateParams.CommentDMAutomation).
 type AutomationsService struct {
@@ -71,9 +72,13 @@ func (s *AutomationsService) Get(ctx context.Context, id string) (*ItemResponse[
 // "facebook"), at most one; a Trigger with Scope "next_post" or "any" needs
 // none. Actions.DM.Text is required. Actions.FollowGate (Instagram only)
 // sends the link only to people who follow the account; a person who has
-// not followed yet is an event with Outcome "waiting". Requires the
-// automations:write scope.
+// not followed yet is an event with Outcome "waiting". Actions.FollowUp
+// (Instagram and Facebook) sends one more DM DelayHours (1 to 23, default
+// 23) after the answer; on an Instagram comment with Follow first off the
+// first DM becomes a tap step and the event is "waiting" until the tap (see
+// AutomationFollowUp). Requires the automations:write scope.
 // Errors: 400 validation_error, 400 follow_gate_instagram_only, 400
+// follow_up_not_supported (FollowUp.Enabled true on X), 400
 // post_not_instagram, 400
 // post_not_facebook, 400 post_required, 404 post_not_found, 404
 // instagram_media_not_found, 404 facebook_post_not_found, 409
@@ -95,7 +100,10 @@ func (s *AutomationsService) Create(ctx context.Context, params *AutomationCreat
 // the match; a new Actions.DM.Text keeps the public reply; Limits with only
 // StopAt keeps MaxSends. PublicReply.Enabled omnisocials.Bool(false) turns
 // the public reply off; FollowGate.Enabled omnisocials.Bool(false) turns
-// Follow first off and keeps its texts; a Limits map with "max_sends": omnisocials.Null
+// Follow first off and keeps its texts; FollowUp merges the same way
+// (FollowUp.RemoveButton removes the button, FollowUp.Enabled
+// omnisocials.Bool(false) turns it off and keeps its texts); a Limits map
+// with "max_sends": omnisocials.Null
 // removes that limit (see AutomationUpdateParams.Limits). Status "paused"
 // pauses and "active" resumes; another PostID / InstagramMediaID /
 // FacebookPostID moves the automation to that post. The platform cannot
@@ -103,7 +111,8 @@ func (s *AutomationsService) Create(ctx context.Context, params *AutomationCreat
 // X DMs on for the workspace (409 x_dms_off). A "completed" automation
 // starts again when its limits or trigger change. Requires the
 // automations:write scope.
-// 400 no_fields when the body is empty.
+// 400 no_fields when the body is empty; 400 follow_up_not_supported for
+// FollowUp.Enabled true on an X automation.
 func (s *AutomationsService) Update(ctx context.Context, id string, params *AutomationUpdateParams) (*ItemResponse[Automation], error) {
 	var out ItemResponse[Automation]
 	if err := s.client.patch(ctx, "/automations/"+url.PathEscape(id), jsonBody(params), &out); err != nil {
@@ -128,7 +137,9 @@ func (s *AutomationsService) Delete(ctx context.Context, id string) error {
 //
 // Note the response shape (see AutomationEventsResponse): not the plain list
 // envelope but Data, Counts (the number of events per outcome) and
-// Pagination.
+// Pagination. Each event carries FollowUp (where the follow-up of that
+// answer is, see AutomationEventFollowUp) and FollowGate.Mode ("follow", or
+// "tap" for the tap step of a follow-up).
 func (s *AutomationsService) ListEvents(ctx context.Context, id string, params *AutomationEventListParams) (*AutomationEventsResponse, error) {
 	query := url.Values{}
 	if params != nil {

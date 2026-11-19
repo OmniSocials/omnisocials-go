@@ -35,7 +35,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "0.18.0"
+const Version = "0.19.0"
 
 const (
 	defaultBaseURL    = "https://api.omnisocials.com/v1"
